@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ViralShorts AI</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">🚀 ViralShorts AI</div>
+            <div class="status-badge" id="status">System Ready</div>
+        </header>
+
+        <main>
+            <!-- Manual Generator -->
+            <section class="card">
+                <h2>🛠️ Manual Generator</h2>
+                <div class="form-group">
+                    <label>Question</label>
+                    <input type="text" id="question" placeholder="Ex: Write a function to reverse a string">
+                </div>
+                <div class="form-group">
+                    <label>Code (Node.js)</label>
+                    <textarea id="code" rows="8" placeholder="function reverse(str) { ... }"></textarea>
+                </div>
+                <div class="controls">
+                    <select id="cursor">
+                        <option value="_">Cursor: Underscore (_)</option>
+                        <option value="|">Cursor: Block (|)</option>
+                    </select>
+                    <button onclick="generateManual()" class="btn-primary">Generate Video</button>
+                </div>
+            </section>
+
+            <!-- AI Automation -->
+            <section class="card ai-card">
+                <h2>✨ AI Automation</h2>
+                <p>Generate unique content using Gemini & Upload to YouTube</p>
+                <div class="ai-controls">
+                    <button onclick="generateAI()" class="btn-magic">✨ Generate Viral Short</button>
+                    <button onclick="authYouTube()" class="btn-youtube">🔴 Auth YouTube</button>
+                </div>
+            </section>
+
+            <!-- Preview -->
+        <section class="card preview-card hidden" id="previewSection">
+            <h2>📺 Preview</h2>
+            <video id="videoPlayer" controls></video>
+            <div class="video-meta" id="videoMeta"></div>
+            <pre class="code-preview" id="codePreview"></pre>
+        </section>
+        </main>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+
+</html>
