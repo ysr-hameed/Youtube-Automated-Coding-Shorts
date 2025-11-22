@@ -40,6 +40,14 @@ class AutoScheduler:
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         existing = db.get_schedule_for_day(today)
         if existing and len(existing) >= count:
+            # Log existing schedules so it's clear why no new schedules are created
+            try:
+                print(f"🗓️ Existing schedules for today ({len(existing)}):")
+                for s in existing:
+                    sa = s.get('scheduled_at')
+                    print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
+            except Exception:
+                pass
             return existing
 
         # window start and end
@@ -60,9 +68,9 @@ class AutoScheduler:
             parsed_times = sorted(parsed_times)
             # Enforce min_gap_minutes between explicit times
             try:
-                min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '60'))
+                min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '30'))
             except Exception:
-                min_gap_minutes = 60
+                min_gap_minutes = 30
             last_added = None
             for t in times_list:
                 try:
@@ -83,14 +91,28 @@ class AutoScheduler:
 
         # If we're generating schedule during runtime, avoid creating times in the past for today
         now = datetime.now(self.tz) if pytz else datetime.now()
-        window_start = max(today + timedelta(hours=8), now + timedelta(minutes=1))  # 8:00 IST or now+1m
+        # By default prefer not to create schedules in the past, but allow forcing full-day schedule
+        try:
+            allow_past = os.getenv('DAILY_ALLOW_PAST', 'true').lower() in ('1', 'true', 'yes')
+        except Exception:
+            allow_past = True
+
+        if allow_past:
+            window_start = today + timedelta(hours=8)
+        else:
+            window_start = max(today + timedelta(hours=8), now + timedelta(minutes=1))  # 8:00 IST or now+1m
         window_end = today + timedelta(hours=21)   # 21:00 IST
+
+        # If the computed window is invalid (end <= start), fall back to full-day window to ensure schedules are created
+        if window_end <= window_start:
+            window_start = today + timedelta(hours=8)
+            window_end = today + timedelta(hours=21)
         total_minutes = int((window_end - window_start).total_seconds() // 60)
         # Determine minimum gap minutes and ensure count is valid
         try:
-            min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '60'))
+            min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '30'))
         except Exception:
-            min_gap_minutes = 60
+            min_gap_minutes = 30
         if count <= 0:
             count = 1
         # Ensure minimum gap
@@ -120,15 +142,20 @@ class AutoScheduler:
         return scheduled
 
     def start(self):
-        print("🕰️ Scheduler Started (India Time)")
+        # Print DB status and scheduler start info to aid debugging
+        try:
+            db_status = db.get_status()
+        except Exception:
+            db_status = {'connected': False}
+        print(f"🕰️ Scheduler Started (India Time) | DB connected={db_status.get('connected')}")
         # On start, ensure today's schedule exists based on env var DAILY_SCHEDULES
         try:
             count = int(os.getenv('DAILY_SCHEDULES', '1'))
         except Exception:
             count = 1
         self._generate_daily_schedule(count)
-    # Run main loop checking schedule every 60 seconds
-    while True:
+        # Run main loop checking schedule every 60 seconds
+        while True:
             # Regen schedule at start of new day
             today_date = datetime.now(self.tz).date()
             if getattr(self, 'current_day', None) != today_date:

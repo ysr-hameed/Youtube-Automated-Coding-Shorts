@@ -312,8 +312,13 @@ class ShortsVideoGenerator:
         
         # Calculate typing speed to match TTS
         # We want the question typing to finish exactly when TTS finishes
+        # Allow a user-adjustable typing speed multiplier via env var TYPING_SPEED_FACTOR
         total_chars_question = len(question)
-        ms_per_char_question = tts_duration_ms / max(1, total_chars_question)
+        try:
+            typing_speed_factor = float(os.getenv('TYPING_SPEED_FACTOR', '1.0'))
+        except Exception:
+            typing_speed_factor = 1.0
+        ms_per_char_question = (tts_duration_ms / max(1, total_chars_question)) * typing_speed_factor
         frames_per_char_question = max(1, int((ms_per_char_question / 1000) * self.fps))
 
         frames = []
@@ -356,6 +361,12 @@ class ShortsVideoGenerator:
         audio_events = []
         if tts_path:
             audio_events.append((0, 'tts', tts_path))
+        # Throttle key audio events so short samples don't create a rapid-fire impression.
+        try:
+            key_min_interval_ms = int(os.getenv('KEY_MIN_INTERVAL_MS', '60'))
+        except Exception:
+            key_min_interval_ms = 60
+        last_key_event_ms = -999999
         
         # Flatten wrapped lines for typing calculation
         flat_question = "\n".join(wrapped_question)
@@ -392,13 +403,14 @@ class ShortsVideoGenerator:
 
             # Key sound events: append 'key' event (sample index) or fall back to click
             if char.strip() and self.audio_enabled:
-                if self.key_samples:
-                    sample_idx = random.randrange(0, len(self.key_samples))
-                    time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'key', sample_idx))
-                else:
-                    time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'key', None))
+                time_ms = int((len(frames) / self.fps) * 1000)
+                if time_ms - last_key_event_ms >= key_min_interval_ms:
+                    if self.key_samples:
+                        sample_idx = random.randrange(0, len(self.key_samples))
+                        audio_events.append((time_ms, 'key', sample_idx))
+                    else:
+                        audio_events.append((time_ms, 'key', None))
+                    last_key_event_ms = time_ms
 
         # Hold after question
         for _ in range(15): frames.append(frames[-1])
@@ -451,8 +463,12 @@ class ShortsVideoGenerator:
             wrapped_code_lines.extend(sub)
         current_code_lines = []
         
-        # Faster typing for code (user adjustable, but let's make it snappy)
-        frames_per_char_code = 2 
+        # Faster typing for code (user adjustable). Base frames per char can be tuned with FRAMES_PER_CHAR_CODE
+        try:
+            base_frames_per_char_code = int(os.getenv('FRAMES_PER_CHAR_CODE', '2'))
+        except Exception:
+            base_frames_per_char_code = 2
+        frames_per_char_code = max(1, int(base_frames_per_char_code * typing_speed_factor))
         
         for line_idx, line in enumerate(wrapped_code_lines):
             current_code_lines.append("")
@@ -510,13 +526,14 @@ class ShortsVideoGenerator:
                 
                 # Key sound events for code typing
                 if char.strip() and self.audio_enabled:
-                    if self.key_samples:
-                        sample_idx = random.randrange(0, len(self.key_samples))
-                        time_ms = int((len(frames) / self.fps) * 1000)
-                        audio_events.append((time_ms, 'key', sample_idx))
-                    else:
-                        time_ms = int((len(frames) / self.fps) * 1000)
-                        audio_events.append((time_ms, 'key', None))
+                    time_ms = int((len(frames) / self.fps) * 1000)
+                    if time_ms - last_key_event_ms >= key_min_interval_ms:
+                        if self.key_samples:
+                            sample_idx = random.randrange(0, len(self.key_samples))
+                            audio_events.append((time_ms, 'key', sample_idx))
+                        else:
+                            audio_events.append((time_ms, 'key', None))
+                        last_key_event_ms = time_ms
             
             # Newline pause
             for _ in range(5): frames.append(frames[-1])
@@ -590,13 +607,14 @@ class ShortsVideoGenerator:
             
             # Key sound for terminal typing
             if char.strip() and self.audio_enabled:
-                if self.key_samples:
-                    sample_idx = random.randrange(0, len(self.key_samples))
-                    time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'key', sample_idx))
-                else:
-                    time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'key', None))
+                time_ms = int((len(frames) / self.fps) * 1000)
+                if time_ms - last_key_event_ms >= key_min_interval_ms:
+                    if self.key_samples:
+                        sample_idx = random.randrange(0, len(self.key_samples))
+                        audio_events.append((time_ms, 'key', sample_idx))
+                    else:
+                        audio_events.append((time_ms, 'key', None))
+                    last_key_event_ms = time_ms
 
         # Enter sound after command
         if self.audio_enabled:
@@ -706,8 +724,17 @@ class ShortsVideoGenerator:
                                 sound = sound.apply_gain(-12 + random.randint(-2, 1))
                                 try:
                                     from pydub import effects
-                                    speed = 1.0 + (random.random() - 0.5) * 0.04  # +/- 2% speed variation
-                                    sound = effects.speedup(sound, playback_speed=speed)
+                                    # Allow configurable % variation for key sample speed. Default 0% (no change).
+                                    try:
+                                        var_pct = float(os.getenv('KEY_SAMPLE_SPEED_VARIATION_PERCENT', '0.0'))
+                                    except Exception:
+                                        var_pct = 0.0
+                                    variation = max(0.0, var_pct / 100.0)
+                                    if variation > 0.0:
+                                        # random variation in range [-variation, +variation]
+                                        speed = 1.0 + (random.random() - 0.5) * (variation * 2)
+                                        # small speed adjustments; wrap in try because effects.speedup may fail in some environments
+                                        sound = effects.speedup(sound, playback_speed=speed)
                                 except Exception:
                                     pass
                             except Exception as e:
