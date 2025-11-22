@@ -3,8 +3,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
-from pydub import AudioSegment
-from pydub.generators import Sine, WhiteNoise
+import shutil
+import logging
+
+# pydub is optional; not all environments have it installed or have ffmpeg on PATH
+try:
+    from pydub import AudioSegment
+    from pydub.generators import Sine, WhiteNoise
+    PYDUB_AVAILABLE = True
+except Exception:
+    PYDUB_AVAILABLE = False
+
 from gtts import gTTS
 import subprocess
 import tempfile
@@ -73,6 +82,15 @@ class ShortsVideoGenerator:
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
 
+        # Check audio capabilities
+        self.ffmpeg_available = shutil.which('ffmpeg') is not None
+        if not PYDUB_AVAILABLE:
+            logging.warning("pydub not installed. Audio generation is disabled.")
+        if not self.ffmpeg_available:
+            logging.warning("ffmpeg not found in PATH. Audio generation is disabled.")
+
+        self.audio_enabled = PYDUB_AVAILABLE and self.ffmpeg_available
+
     def get_font(self, size, bold=False):
         try:
             # Try to use a good coding font if available, else default
@@ -83,6 +101,10 @@ class ShortsVideoGenerator:
 
     def create_mechanical_click(self):
         """Synthesize a 'thocky' mechanical keyboard sound"""
+        # If audio isn't available, just return None to indicate a disabled audio event
+        if not self.audio_enabled:
+            return None
+
         # Mix a short sine wave with some noise for the 'click'
         tone = Sine(400).to_audio_segment(duration=30).apply_gain(-5)
         click = WhiteNoise().to_audio_segment(duration=15).apply_gain(-10)
@@ -91,10 +113,48 @@ class ShortsVideoGenerator:
 
     def create_enter_sound(self):
         """Synthesize a heavier enter key sound"""
+        if not self.audio_enabled:
+            return None
+
         tone = Sine(300).to_audio_segment(duration=60).apply_gain(-3)
         click = WhiteNoise().to_audio_segment(duration=30).apply_gain(-8)
         sound = tone.overlay(click)
         return sound.fade_out(20)
+
+    def create_background_music(self, duration_ms):
+        """Create a low-volume ambient background music layer for the whole video.
+        Use multiple sine waves slightly detuned to make it interesting.
+        """
+        if not self.audio_enabled:
+            return None
+
+        # Create a layered ambient track
+        base = Sine(220).to_audio_segment(duration=duration_ms).apply_gain(-30)
+        layer1 = Sine(330).to_audio_segment(duration=duration_ms).apply_gain(-34)
+        layer2 = Sine(440).to_audio_segment(duration=duration_ms).apply_gain(-36)
+        music = base.overlay(layer1).overlay(layer2)
+
+        # Add a faint noise pad for texture
+        noise = WhiteNoise().to_audio_segment(duration=duration_ms).apply_gain(-42)
+        music = music.overlay(noise)
+        return music
+
+    def create_background_music(self, duration_ms=10000):
+        """Create a subtle looping background music segment for the full video duration.
+        This uses layered low-volume sine tones and light noise for texture.
+        """
+        if not self.audio_enabled:
+            return None
+
+        # Build a layered pad/chord with low gain
+        base1 = Sine(110).to_audio_segment(duration=duration_ms).apply_gain(-30)
+        base2 = Sine(220).to_audio_segment(duration=duration_ms).apply_gain(-33)
+        base3 = Sine(330).to_audio_segment(duration=duration_ms).apply_gain(-35)
+        # A faint noise bed
+        noise = WhiteNoise().to_audio_segment(duration=duration_ms).apply_gain(-50)
+        music = base1.overlay(base2).overlay(base3).overlay(noise)
+        # subtle fade in/out
+        return music.fade_in(500).fade_out(500)
 
     def tokenize_code(self, line):
         """Simple regex-based tokenizer for syntax highlighting"""
@@ -120,6 +180,43 @@ class ShortsVideoGenerator:
         # We will just draw the line character by character in the main loop to ensure perfect typing
         return line
 
+    def wrap_line_by_width(self, draw, line, font, max_width):
+        """Wrap a single line of text into multiple lines so that each fits within max_width (pixels).
+        Returns a list of wrapped lines.
+        """
+        if not line:
+            return [""]
+
+        words = line.split(' ')
+        lines = []
+        current = ''
+        for w in words:
+            candidate = w if current == '' else f"{current} {w}"
+            if draw.textlength(candidate, font=font) <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                # if single word too long for the width, split by character approx
+                if draw.textlength(w, font=font) <= max_width:
+                    current = w
+                else:
+                    part = ''
+                    for ch in w:
+                        if draw.textlength(part + ch, font=font) <= max_width:
+                            part += ch
+                        else:
+                            if part:
+                                lines.append(part)
+                            part = ch
+                    if part:
+                        current = part
+                    else:
+                        current = ''
+        if current != '':
+            lines.append(current)
+        return lines
+
     def generate_video(self, question, code, filename="viral_short"):
         print(f"🚀 Generating Viral Short: {filename}")
         
@@ -129,12 +226,20 @@ class ShortsVideoGenerator:
         print(f"📝 Output: {real_output}")
 
         # 2. Audio Setup (TTS)
-        print("🗣️ Generating TTS...")
-        tts = gTTS(text=question, lang='en', slow=False)
-        tts_path = os.path.join(self.audio_dir, "tts.mp3")
-        tts.save(tts_path)
-        tts_audio = AudioSegment.from_mp3(tts_path)
-        tts_duration_ms = len(tts_audio)
+        # Generate TTS only when audio generation is enabled
+        tts_path = None
+        tts_duration_ms = max(1000, len(question) * 55) # approximate fallback (ms)
+        if self.audio_enabled:
+            try:
+                print("🗣️ Generating TTS...")
+                tts = gTTS(text=question, lang='en', slow=False)
+                tts_path = os.path.join(self.audio_dir, "tts.mp3")
+                tts.save(tts_path)
+                tts_audio = AudioSegment.from_mp3(tts_path)
+                tts_duration_ms = len(tts_audio)
+            except Exception as e:
+                logging.warning(f"TTS or audio load failed, continuing without audio: {e}")
+                tts_path = None
         
         # Calculate typing speed to match TTS
         # We want the question typing to finish exactly when TTS finishes
@@ -179,7 +284,9 @@ class ShortsVideoGenerator:
         current_q_text = ""
         q_char_count = 0
         
-        audio_events = [(0, 'tts', tts_path)]
+        audio_events = []
+        if tts_path:
+            audio_events.append((0, 'tts', tts_path))
         
         # Flatten wrapped lines for typing calculation
         flat_question = "\n".join(wrapped_question)
@@ -217,19 +324,63 @@ class ShortsVideoGenerator:
 
         # --- PHASE 3: CODE TYPING ---
         code_lines = code.split('\n')
+        # Build wrapped code lines to prevent visual overflow in the video
+        img_tmp, draw_tmp = create_bg()
+        max_code_width_px = self.width - margin_x - 60 - margin_x
+
+        def wrap_code_line(draw, text, font, max_px):
+            # Preserve indentation
+            leading_ws = re.match(r"^(\s*)", text).group(1)
+            stripped = text[len(leading_ws):]
+            if not stripped:
+                return [leading_ws]
+
+            tokens = re.split(r"(\s+)", stripped)
+            lines = []
+            curr = leading_ws
+            for token in tokens:
+                # If token alone is too large, break it into characters
+                if draw.textlength(curr + token, font=font) <= max_px:
+                    curr += token
+                else:
+                    if curr.strip() or curr != leading_ws:
+                        lines.append(curr)
+                    # If token itself is too long, break by character
+                    if draw.textlength(leading_ws + token, font=font) > max_px:
+                        piece = ''
+                        for ch in token:
+                            if draw.textlength(leading_ws + piece + ch, font=font) <= max_px:
+                                piece += ch
+                            else:
+                                lines.append(leading_ws + piece)
+                                piece = ch
+                        if piece:
+                            curr = leading_ws + piece
+                        else:
+                            curr = leading_ws
+                    else:
+                        curr = leading_ws + token.lstrip()
+            if curr.strip() or curr != leading_ws:
+                lines.append(curr)
+            return lines
+
+        wrapped_code_lines = []
+        for l in code_lines:
+            sub = wrap_code_line(draw_tmp, l, font_code, max_code_width_px)
+            wrapped_code_lines.extend(sub)
         current_code_lines = []
         
         # Faster typing for code (user adjustable, but let's make it snappy)
         frames_per_char_code = 2 
         
-        for line_idx, line in enumerate(code_lines):
+        for line_idx, line in enumerate(wrapped_code_lines):
             current_code_lines.append("")
             
             # Indentation
             indent = len(line) - len(line.lstrip())
             current_code_lines[-1] = " " * indent
             
-            for char in line.strip():
+            for char in line[len(" " * indent):]:
                 img, draw = create_bg()
                 
                 # Draw Question (Static)
@@ -242,7 +393,8 @@ class ShortsVideoGenerator:
                 current_code_lines[-1] += char
                 
                 cy = code_y
-                for c_line in current_code_lines:
+                for idx, c_line in enumerate(current_code_lines):
+                    wrapped_sub = wrap_code_line(draw, c_line, font_code, max_code_width_px)
                     # Simple syntax highlighting (Keyword detection for whole words)
                     # For char-by-char, we just draw the whole line for now to keep it stable
                     # A full lexer for partial lines is complex, so we'll colorize fully typed words
@@ -251,12 +403,15 @@ class ShortsVideoGenerator:
                     # Draw line number
                     # draw.text((margin_x, cy), "1", font=font_code, fill=self.colors['comment'])
                     
-                    # Draw code text
-                    draw.text((margin_x + 60, cy), c_line, font=font_code, fill=self.text_color)
-                    cy += 70
+                    # Draw code text (handle wrapped lines)
+                    for sub in wrapped_sub:
+                        draw.text((margin_x + 60, cy), sub, font=font_code, fill=self.text_color)
+                        cy += 70
                 
                 # Cursor
-                last_line_width = draw.textlength(current_code_lines[-1], font=font_code)
+                # Compute cursor position considering wrapping of the last line
+                last_wrapped = wrap_code_line(draw, current_code_lines[-1], font_code, max_code_width_px)
+                last_line_width = draw.textlength(last_wrapped[-1], font=font_code) if last_wrapped else 0
                 draw.text((margin_x + 60 + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
                 
                 for _ in range(frames_per_char_code):
@@ -288,8 +443,10 @@ class ShortsVideoGenerator:
                 y += 80
             cy = code_y
             for c_line in current_code_lines:
-                draw.text((margin_x + 60, cy), c_line, font=font_code, fill=self.text_color)
-                cy += 70
+                wrapped_sub = wrap_code_line(draw, c_line, font_code, max_code_width_px)
+                for sub in wrapped_sub:
+                    draw.text((margin_x + 60, cy), sub, font=font_code, fill=self.text_color)
+                    cy += 70
                 
             # Draw Terminal Box
             progress = i / 20
@@ -365,34 +522,77 @@ class ShortsVideoGenerator:
         # --- MIX AUDIO ---
         print("🎵 Mixing Audio...")
         total_duration = len(frames) / self.fps * 1000
-        final_audio = AudioSegment.silent(duration=total_duration)
+        if self.audio_enabled:
+            final_audio = AudioSegment.silent(duration=total_duration)
+            # Add gentle background music for the entire video
+            bg_music = self.create_background_music(total_duration)
+            if bg_music is not None:
+                final_audio = final_audio.overlay(bg_music)
+        else:
+            final_audio = None
         
         click_sound = self.create_mechanical_click()
+        # Make clicks a bit softer so background music sits under them
+        if click_sound is not None:
+            click_sound = click_sound.apply_gain(-6)
         enter_sound = self.create_enter_sound()
         
-        for time_ms, type, data in audio_events:
-            if type == 'tts':
-                sound = AudioSegment.from_mp3(data)
-            elif type == 'click':
-                sound = click_sound
-            elif type == 'enter':
-                sound = enter_sound
+        # If audio is not enabled, skip mixing entirely
+        if self.audio_enabled:
+            for time_ms, type, data in audio_events:
+                try:
+                    if type == 'tts' and data:
+                        sound = AudioSegment.from_mp3(data)
+                    elif type == 'click':
+                        sound = click_sound
+                    elif type == 'enter':
+                        sound = enter_sound
+                    else:
+                        continue
+                except Exception as e:
+                    logging.warning(f"Audio event failed: {e}")
+                    continue
+
+                if sound is not None:
+                    final_audio = final_audio.overlay(sound, position=time_ms)
             
-            final_audio = final_audio.overlay(sound, position=time_ms)
-            
-        temp_audio = os.path.join(self.audio_dir, "temp_audio.mp3")
-        final_audio.export(temp_audio, format="mp3")
+        temp_audio = None
+        if self.audio_enabled:
+            temp_audio = os.path.join(self.audio_dir, "temp_audio.mp3")
+            try:
+                final_audio.export(temp_audio, format="mp3")
+            except Exception as e:
+                logging.warning(f"Failed to export final audio: {e}")
+                temp_audio = None
         
         # --- MERGE ---
         final_output = os.path.join(self.output_dir, f"{filename}.mp4")
-        subprocess.run([
-            'ffmpeg', '-y', '-i', temp_video, '-i', temp_audio,
-            '-c:v', 'copy', '-c:a', 'aac', final_output
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.ffmpeg_available and temp_audio:
+            try:
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', temp_video, '-i', temp_audio,
+                    '-c:v', 'copy', '-c:a', 'aac', final_output
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            except Exception as e:
+                logging.warning(f"ffmpeg merge failed, saving video without audio: {e}")
+                # If ffmpeg merge fails, simply copy temp_video to final output
+                os.replace(temp_video, final_output)
+        else:
+            # If no ffmpeg or audio, just move/copy the video file as final output
+            os.replace(temp_video, final_output)
         
         # Cleanup
-        os.remove(temp_video)
-        os.remove(temp_audio)
+        # Cleanup remaining temp files if they exist
+        try:
+            if os.path.exists(temp_video):
+                os.remove(temp_video)
+        except Exception:
+            pass
+        try:
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
+        except Exception:
+            pass
         
         return final_output
 

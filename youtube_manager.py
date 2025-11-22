@@ -10,7 +10,11 @@ from database import db
 
 class YouTubeManager:
     def __init__(self):
-        self.SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+        self.SCOPES = [
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube',
+            'https://www.googleapis.com/auth/youtube.force-ssl'
+        ]
         self.api_service_name = "youtube"
         self.api_version = "v3"
         self.youtube = None
@@ -89,6 +93,19 @@ class YouTubeManager:
         # Pickle and base64 encode to store in text field
         pickled = base64.b64encode(pickle.dumps(creds)).decode('utf-8')
         db.set_config('youtube_token', pickled)
+        # Also store a basic json shape for human inspection and migration
+        try:
+            cred_json = {
+                'token': getattr(creds, 'token', None),
+                'refresh_token': getattr(creds, 'refresh_token', None),
+                'token_uri': getattr(creds, 'token_uri', None),
+                'client_id': getattr(creds, 'client_id', None),
+                'client_secret': getattr(creds, 'client_secret', None),
+                'scopes': list(getattr(creds, 'scopes', [])) if getattr(creds, 'scopes', None) else None
+            }
+            db.set_config('youtube_token_json', json.dumps(cred_json))
+        except Exception:
+            pass
 
     def _load_credentials(self):
         token = db.get_config('youtube_token')
@@ -112,15 +129,44 @@ class YouTubeManager:
                     return False
                     
                 # Create flow from config dictionary
-                flow = InstalledAppFlow.from_client_config(
-                    client_config, self.SCOPES)
+                flow = InstalledAppFlow.from_client_config(client_config, self.SCOPES)
                 # Use fixed port 8080 to match Google Console Redirect URI
-                creds = flow.run_local_server(port=8080)
+                # Request offline access plus consent to get a refresh token
+                try:
+                    creds = flow.run_local_server(port=8080, access_type='offline', prompt='consent')
+                except TypeError:
+                    creds = flow.run_local_server(port=8080)
                 
             self._save_credentials(creds)
                 
         self.youtube = build(self.api_service_name, self.api_version, credentials=creds)
         return True
+
+    def is_authenticated(self):
+        """Return a boolean indicating whether we have (and can use) saved credentials.
+
+        This will try to load credentials from the DB and report whether they are
+        present and usable. We do not trigger a login flow here.
+        """
+        creds = self._load_credentials()
+        if not creds:
+            return False
+        try:
+            if creds.valid:
+                return True
+            # If expired but refresh token exists, we can still refresh programmatically
+            if getattr(creds, 'expired', False) and getattr(creds, 'refresh_token', None):
+                # Attempt a quiet refresh
+                try:
+                    creds.refresh(Request())
+                    # Save the refreshed credentials
+                    self._save_credentials(creds)
+                    return True
+                except Exception:
+                    return False
+            return False
+        except Exception:
+            return False
 
     def upload_video(self, file_path, title, description, tags, category_id="28"):
         if not self.youtube:

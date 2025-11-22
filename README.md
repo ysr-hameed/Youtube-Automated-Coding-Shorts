@@ -1,3 +1,7 @@
+Environment variables to configure automation:
+- `ENABLE_UPLOAD` (true/false) — Allow uploads to YouTube
+- `DAILY_UPLOAD_LIMIT` (integer) — Maximum number of videos to upload per day
+- `CRON_SECRET` or `CRON_TOKEN` — Optional secret to protect cron endpoint
 # 🎬 Shorts Video Generator
 
 A beautiful Python-based application to generate professional coding tutorial shorts videos with typing animations, syntax highlighting, and terminal simulations.
@@ -19,12 +23,17 @@ A beautiful Python-based application to generate professional coding tutorial sh
 
 - Python 3.8+
 - pip
+ - ffmpeg (system binary in PATH) - required for audio processing (pydub) and final audio/video merging
 
 ### Installation
 
 1. Install dependencies:
 ```bash
 pip install -r requirements.txt
+```
+2. Install ffmpeg (Linux / Debian/Ubuntu):
+```bash
+sudo apt-get update && sudo apt-get install -y ffmpeg
 ```
 
 2. Run the server:
@@ -49,6 +58,10 @@ http://localhost:5000
    - **Output**: Expected output
 3. Click "Generate Video"
 4. Download your video!
+
+### Auto-upload behavior
+- When using the AI generator ("✨ Generate Viral Short"), if you previously authorized YouTube, the app will automatically attempt to upload the generated video using the saved token.
+- If you want to disable uploads, either revoke the stored token in the database or set the `ENABLE_UPLOAD=false` environment variable.
 
 ### Programmatically
 
@@ -100,6 +113,16 @@ Vid Generator/
 - **Codec**: MP4V
 - **Font**: DejaVu Sans Mono (monospace)
 
+## 🕰️ Cron / Automation
+
+You can trigger automatic generation and upload via `GET /api/cron/generate`.
+- Optional query param: `?secret=CRON_SECRET` if you have the `CRON_SECRET` set in your environment.
+- Optional param: `?count=N` to generate N videos in a single run (still limited by `DAILY_UPLOAD_LIMIT`).
+
+Scheduler and upload limits:
+- Set `DAILY_UPLOAD_LIMIT` in your environment to limit how many videos will be uploaded per day.
+- Set `ENABLE_UPLOAD=true` to allow the app to upload videos to YouTube. If false, videos will be generated and saved locally.
+
 ### Animation Timeline
 
 1. Question typing (char-by-char)
@@ -126,6 +149,22 @@ Vid Generator/
 - Ensure all dependencies are installed
 - Check that fonts are available on your system
 - Verify Python version is 3.8+
+ - If you see audio related errors or "ImportError" for audio libraries:
+   1. Ensure `ffmpeg` binary is installed and available on PATH: `which ffmpeg` should produce a path.
+   2. Ensure `pydub` is installed: `pip install pydub`.
+   3. If ffmpeg is installed in a non-standard location, export it for pydub or set it manually in code:
+
+```python
+from pydub import AudioSegment
+from pydub.utils import which
+AudioSegment.converter = which("ffmpeg") or "/usr/bin/ffmpeg"
+```
+
+You can also run a quick environment check to see if necessary binaries and packages are present:
+
+```bash
+python tools/check_audio_env.py
+```
 
 **Web interface not loading:**
 - Make sure Flask is running

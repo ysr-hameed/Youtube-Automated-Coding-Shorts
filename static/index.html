@@ -38,6 +38,18 @@
                     <button onclick="generateManual()" class="btn-primary">Generate Video</button>
                 </div>
             </section>
+            <!-- Cronjob URL -->
+            <section class="card">
+                <h2>🔁 Cron/Automations</h2>
+                <p>Trigger automated generation & upload via cron or webhooks.</p>
+                <div class="form-group">
+                    <label for="cronUrl">Cron URL (GET)</label>
+                    <input id="cronUrl" type="text" readonly value="" />
+                </div>
+                <div class="controls">
+                    <button class="btn-primary" onclick="copyCron()">Copy Cron URL</button>
+                </div>
+            </section>
 
             <!-- AI Automation -->
             <section class="card ai-card">
@@ -45,7 +57,10 @@
                 <p>Generate unique content using Gemini & Upload to YouTube</p>
                 <div class="ai-controls">
                     <button onclick="generateAI()" class="btn-magic">✨ Generate Viral Short</button>
-                    <button onclick="authYouTube()" class="btn-youtube">🔴 Auth YouTube</button>
+                    <button id="btnYoutube" onclick="authYouTube()" class="btn-youtube">🔴 Auth YouTube</button>
+                    <label class="auto-upload">
+                        <input type="checkbox" id="autoUpload" checked /> Auto Upload to YouTube
+                    </label>
                 </div>
             </section>
 

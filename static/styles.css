@@ -126,6 +126,15 @@ button:active {
     color: #fff;
 }
 
+.auto-upload {
+    margin-left: 1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: #8b949e;
+    font-size: var(--font-sm);
+}
+
 .hidden {
     display: none;
 }
@@ -147,7 +156,13 @@ video {
     font-size: var(--font-sm);
     overflow-x: auto;
     counter-reset: line;
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.btn-authenticated {
+    background: linear-gradient(45deg, #57d85a, #28a745);
+    color: #fff;
 }
 
 .code-preview .line {

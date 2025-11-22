@@ -44,9 +44,14 @@ class Database:
                     code TEXT NOT NULL,
                     title TEXT,
                     tags TEXT[],
+                    uploaded BOOLEAN DEFAULT FALSE,
+                    youtube_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            # Ensure columns exist for uploaded and youtube_id (safe for migrations)
+            cur.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS uploaded BOOLEAN DEFAULT FALSE;")
+            cur.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS youtube_id TEXT;")
             print("✅ Database Schema Initialized")
 
     # --- Config Methods ---
@@ -78,15 +83,23 @@ class Database:
         if conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO content_history (topic, question, code, title, tags)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO content_history (topic, question, code, title, tags, uploaded, youtube_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """, (
                     content['topic'],
                     content['question'],
                     content['code'],
-                    content['title'],
-                    content.get('tags', [])
+                    content.get('title'),
+                    content.get('tags', []),
+                    content.get('uploaded', False),
+                    content.get('youtube_id', None)
                 ))
+                try:
+                    new_id = cur.fetchone()[0]
+                except Exception:
+                    new_id = None
+                return new_id
         else:
             self.mock_history.append(content)
 
@@ -99,6 +112,18 @@ class Database:
         else:
             # Return most recent topics from mock history
             return [c['topic'] for c in self.mock_history[-limit:][::-1]]
+
+    def mark_uploaded(self, topic=None, entry_id=None, youtube_id=None):
+        conn = self.get_conn()
+        if not conn: return False
+        with conn.cursor() as cur:
+            if entry_id:
+                cur.execute("UPDATE content_history SET uploaded = TRUE, youtube_id = %s WHERE id = %s", (youtube_id, entry_id))
+                return True
+            elif topic:
+                cur.execute("UPDATE content_history SET uploaded = TRUE, youtube_id = %s WHERE id = (SELECT id FROM content_history WHERE topic = %s ORDER BY created_at DESC LIMIT 1)", (youtube_id, topic))
+                return True
+        return False
 
 # Instantiate a global db object for importers
 db = Database()
@@ -191,5 +216,14 @@ class Database:
         with conn.cursor() as cur:
             cur.execute("SELECT topic FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
             return [row[0] for row in cur.fetchall()]
+
+    def get_today_upload_count(self):
+        conn = self.get_conn()
+        if not conn:
+            # Fallback: return mock_history length
+            return len(self.mock_history) if hasattr(self, 'mock_history') else 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM content_history WHERE created_at >= date_trunc('day', now()) AND uploaded = TRUE")
+            return cur.fetchone()[0]
 
 db = Database()
