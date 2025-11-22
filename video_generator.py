@@ -89,9 +89,9 @@ class ShortsVideoGenerator:
         # Check audio capabilities
         self.ffmpeg_available = shutil.which('ffmpeg') is not None
         if not PYDUB_AVAILABLE:
-            logging.warning("pydub not installed. Audio generation is disabled.")
+            logging.info("pydub not installed. Audio features will be disabled.")
         if not self.ffmpeg_available:
-            logging.warning("ffmpeg not found in PATH. Audio generation is disabled.")
+            logging.info("ffmpeg not found in PATH. Audio features will be disabled.")
 
         self.audio_enabled = PYDUB_AVAILABLE and self.ffmpeg_available
         # Now load key samples (method exists below)
@@ -142,23 +142,41 @@ class ShortsVideoGenerator:
         # If audio isn't available, just return None to indicate a disabled audio event
         if not self.audio_enabled:
             return None
-
-        # Mix a short sine wave with some noise for the 'click'
-        tone = Sine(400).to_audio_segment(duration=30).apply_gain(-5)
-        click = WhiteNoise().to_audio_segment(duration=15).apply_gain(-10)
-        sound = tone.overlay(click)
-        return sound.fade_out(10)
+        # Better mechanical 'thock' body with layered partials + short metal transient
+        rand = random.Random()
+        rand.seed(time.time_ns())
+        # Body frequency (thock) and a harmonic; lower for deeper key feel
+        body_freq = rand.choice([110, 120, 140, 150, 170]) + rand.randint(-3, 3)
+        body = Sine(body_freq).to_audio_segment(duration=70).apply_gain(-18 + rand.randint(-2, 2))
+        body2 = Sine(int(body_freq * 2.05)).to_audio_segment(duration=80).apply_gain(-22 + rand.randint(-2, 2))
+        # Short high transient to simulate the 'click' on press
+        transient_freq = rand.choice([1800, 2200, 2800, 3200]) + rand.randint(-100, 100)
+        transient = Sine(transient_freq).to_audio_segment(duration=25).apply_gain(-6 + rand.randint(-3, 0))
+        # Subtle metallic/air noise for the click - very short
+        noise = WhiteNoise().to_audio_segment(duration=35).apply_gain(-28 + rand.randint(-3, 2))
+        # Variants: a tiny pitch sweep effect by layering slightly detuned transient
+        transient2 = Sine(transient_freq + rand.randint(30, 80)).to_audio_segment(duration=18).apply_gain(-12 + rand.randint(-2, 1))
+        # Combine layers, fade out to keep it tight
+        sound = body.overlay(body2).overlay(transient).overlay(transient2).overlay(noise)
+        # Slight fade for natural decay
+        return sound.fade_in(5).fade_out(70)
 
     def create_random_key_click(self):
         """Synthesize a short key press sound with randomized parameters to avoid repetition."""
         if not self.audio_enabled:
             return None
         # Randomize frequency for slight timbral changes
-        freq = random.choice([300, 350, 400, 450, 500, 550]) + random.randint(-10, 10)
-        dur = random.choice([25, 30, 35, 40])
-        tone = Sine(freq).to_audio_segment(duration=dur).apply_gain(-8 + random.randint(-3, 0))
-        click = WhiteNoise().to_audio_segment(duration=max(10, dur//2)).apply_gain(-15)
-        sound = tone.overlay(click)
+        rand = random.Random()
+        rand.seed(time.time_ns())
+        freq = rand.choice([300, 350, 380, 420, 460, 500]) + rand.randint(-8, 8)
+        dur = rand.choice([22, 26, 30, 34, 38])
+        # Small two-tone body with detune
+        tone = Sine(freq).to_audio_segment(duration=dur).apply_gain(-16 + rand.randint(-3, 0))
+        tone2 = Sine(int(freq * 1.12)).to_audio_segment(duration=dur + 8).apply_gain(-22 + rand.randint(-3, 1))
+        click = WhiteNoise().to_audio_segment(duration=max(8, dur//3)).apply_gain(-26 + rand.randint(-3, 2))
+        # High transient for bite
+        transient = Sine(rand.choice([1800, 2200, 2600])).to_audio_segment(duration=10).apply_gain(-8 + rand.randint(-2, 1))
+        sound = tone.overlay(tone2).overlay(click).overlay(transient)
         return sound.fade_out(10)
 
     def create_enter_sound(self):
@@ -166,8 +184,8 @@ class ShortsVideoGenerator:
         if not self.audio_enabled:
             return None
 
-        tone = Sine(300).to_audio_segment(duration=60).apply_gain(-3)
-        click = WhiteNoise().to_audio_segment(duration=30).apply_gain(-8)
+        tone = Sine(300).to_audio_segment(duration=60).apply_gain(-8)
+        click = WhiteNoise().to_audio_segment(duration=30).apply_gain(-16)
         sound = tone.overlay(click)
         return sound.fade_out(20)
 
@@ -641,8 +659,9 @@ class ShortsVideoGenerator:
             final_audio = None
         
         click_sound = self.create_mechanical_click()
-        # Make clicks a bit softer so background music sits under them
+        # Make clicks a bit softer so background music sits under them; keep mechanical clicks as preferred fallback
         if click_sound is not None:
+            # Slightly reduce mechanical click - small attenuation so it's audible but not overpowering
             click_sound = click_sound.apply_gain(-6)
         # Prefer an enter sample file if present, otherwise use synthesized enter sound
         enter_sample = None
@@ -670,7 +689,8 @@ class ShortsVideoGenerator:
             for time_ms, type, data in audio_events:
                 try:
                     if type == 'tts' and data:
-                        sound = AudioSegment.from_mp3(data)
+                        # Increase TTS volume a bit so it sits above background/keys
+                        sound = AudioSegment.from_mp3(data).apply_gain(+6)
                     elif type == 'click':
                         sound = click_sound
                     elif type == 'enter':
@@ -681,10 +701,13 @@ class ShortsVideoGenerator:
                             sample_path = self.key_samples[data]
                             sound = AudioSegment.from_file(sample_path)
                             # Soften the key sample so it doesn't overpower the mix
-                            sound = sound.apply_gain(-10)
+                            sound = sound.apply_gain(-12)
                         else:
-                            # Prefer a randomized synth key click to avoid repetition when samples aren't available
-                            sound = self.create_random_key_click() or click_sound
+                            # Prefer a mechanical click fallback the majority of the time but add variety
+                            if click_sound and random.random() < 0.8:
+                                sound = click_sound
+                            else:
+                                sound = self.create_random_key_click() or click_sound
                     else:
                         continue
                 except Exception as e:

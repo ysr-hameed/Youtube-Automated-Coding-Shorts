@@ -104,7 +104,41 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set cron URL to absolute path for easy copying
     const cron = document.getElementById('cronUrl');
     if (cron) cron.value = `${window.location.origin}/api/cron/generate`;
+    // Load schedule info
+    refreshSchedule();
+    // Poll schedule periodically every minute
+    setInterval(refreshSchedule, 60 * 1000);
 });
+
+async function refreshSchedule() {
+    try {
+        const res = await fetch('/api/schedule/today');
+        const data = await res.json();
+        const list = document.getElementById('scheduleList');
+        if (!list) return;
+        if (!data.success) {
+            list.innerText = 'Error loading schedule';
+            return;
+        }
+        const schedules = data.schedules || [];
+        if (schedules.length === 0) {
+            list.innerText = 'No scheduled runs for today.';
+            return;
+        }
+        const items = schedules.map(s => {
+            const scheduledAt = new Date(s.scheduled_at);
+            const executedAt = s.executed_at ? new Date(s.executed_at) : null;
+            const tzOptions = { timeZone: 'Asia/Kolkata', hour12: false };
+            const scheduledStr = scheduledAt.toLocaleTimeString(undefined, tzOptions);
+            const executedStr = executedAt ? executedAt.toLocaleTimeString(undefined, tzOptions) : null;
+            const status = s.executed ? `✅ Executed at ${executedStr || 'unknown'} (IST)` : 'Scheduled (IST)';
+            return `<div class="schedule-item">${scheduledStr} — ${status}</div>`;
+        });
+        list.innerHTML = items.join('');
+    } catch (e) {
+        console.warn('Failed to fetch schedule', e);
+    }
+}
 
 function showPreview(url) {
     const section = document.getElementById('previewSection');

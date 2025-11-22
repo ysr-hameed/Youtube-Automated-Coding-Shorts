@@ -178,3 +178,10 @@ video {
     text-align: right;
     color: #8b949e;
 }
+
+.schedule-item {
+    padding: 0.25rem 0;
+    border-bottom: 1px dashed #333;
+    color: #bcd0ff;
+}
+.schedule-item:last-child { border-bottom: 0; }

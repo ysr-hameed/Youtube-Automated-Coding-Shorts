@@ -122,6 +122,15 @@ You can trigger automatic generation and upload via `GET /api/cron/generate`.
 Scheduler and upload limits:
 - Set `DAILY_UPLOAD_LIMIT` in your environment to limit how many videos will be uploaded per day.
 - Set `ENABLE_UPLOAD=true` to allow the app to upload videos to YouTube. If false, videos will be generated and saved locally.
+ - Set `ENABLE_UPLOAD=true` to allow the app to upload videos to YouTube. If false, videos will be generated and saved locally.
+
+### Scheduler settings
+
+- `DAILY_SCHEDULES`: number of randomized runs per day (default 1). Schedules are randomly assigned between 8:00 and 21:00 IST with a minimum of 30 minutes gap.
+- `DAILY_SCHEDULE_TIMES`: optional, explicit comma-separated times (in IST HH:MM) to use instead of randomized scheduling. Example: `DAILY_SCHEDULE_TIMES=08:30,12:00,19:00`. If this is set, `DAILY_SCHEDULES` is ignored.
+- `SCHEDULE_TIMEOUT_SECONDS`: time in seconds to wait for a scheduled run to complete (default 600). Scheduled runs that exceed the timeout are marked as failed and will not be retried automatically.
+
+When the server starts it will ensure that today's schedule is created and persisted in the database and the UI will display scheduled times for the day.
 
 ### Animation Timeline
 

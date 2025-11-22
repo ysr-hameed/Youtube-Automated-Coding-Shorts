@@ -1,4 +1,5 @@
 from flask import Flask, render_template, request, jsonify, send_file
+import logging
 from flask_cors import CORS
 from video_generator import ShortsVideoGenerator
 from content_manager import ContentManager
@@ -8,6 +9,7 @@ from database import db
 import threading
 import os
 from datetime import datetime
+import pytz
 
 # Load environment variables from .env
 from dotenv import load_dotenv
@@ -25,10 +27,28 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
 
 generator = ShortsVideoGenerator()
+logging.info(f"Audio enabled: {generator.audio_enabled}")
 content_mgr = ContentManager()
 youtube_mgr = YouTubeManager()
 if not generator.audio_enabled:
-    print("⚠️ Audio features are disabled. Ensure pydub is installed and ffmpeg is on PATH for full audio functionality.")
+    logging.info("⚠️ Audio features are disabled. Ensure pydub is installed and ffmpeg is on PATH for full audio functionality.")
+
+# Optionally start scheduler in background
+if os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true':
+    try:
+        from scheduler_service import AutoScheduler
+        scheduler = AutoScheduler()
+        # Generate schedule immediately to ensure the UI will show today's schedules
+        try:
+            count = int(os.getenv('DAILY_SCHEDULES', '1'))
+        except Exception:
+            count = 1
+        scheduler._generate_daily_schedule(count)
+        t = threading.Thread(target=scheduler.start, daemon=True)
+        t.start()
+        logging.info('Scheduler started in background')
+    except Exception as e:
+        logging.warning(f'Failed to start scheduler in background: {e}')
 
 @app.route('/')
 def index():
@@ -129,6 +149,17 @@ def auth_status():
         return jsonify({"authenticated": False, "error": str(e)})
 
 
+@app.route('/api/health', methods=['GET'])
+def health():
+    try:
+        return jsonify({
+            "ok": True,
+            "audio_enabled": generator.audio_enabled,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route('/api/cron/generate', methods=['GET'])
 def cron_generate():
     # Optional secret for security
@@ -166,7 +197,51 @@ def cron_generate():
         results.append(result)
     return jsonify({"success": True, "count": len(results), "results": results})
 
+
+@app.route('/api/schedule/today', methods=['GET'])
+def schedule_today():
+    try:
+        from datetime import datetime
+        tz = pytz.timezone('Asia/Kolkata')
+        today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        schedules = db.get_schedule_for_day(today)
+        # Convert datetime to ISO strings when present
+        def serialize(s):
+            return {
+                'id': s.get('id'),
+                'scheduled_at': s.get('scheduled_at').isoformat() if s.get('scheduled_at') else None,
+                'executed': s.get('executed'),
+                'executed_at': s.get('executed_at').isoformat() if s.get('executed_at') else None,
+                'result': s.get('result')
+            }
+        return jsonify({'success': True, 'schedules': [serialize(s) for s in (schedules or [])]})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/schedule/recompute', methods=['POST'])
+def schedule_recompute():
+    try:
+        data = request.json or {}
+        count = int(data.get('count', os.getenv('DAILY_SCHEDULES', '1')))
+        from scheduler_service import AutoScheduler
+        scheduler = AutoScheduler()
+        schedules = scheduler._generate_daily_schedule(count)
+        # Serialize
+        res = []
+        for s in schedules:
+            res.append({
+                'id': s.get('id'),
+                'scheduled_at': s.get('scheduled_at').isoformat() if s.get('scheduled_at') else None,
+                'executed': s.get('executed')
+            })
+        return jsonify({'success': True, 'schedules': res})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 if __name__ == '__main__':
     # Ensure static folder exists
     os.makedirs('static', exist_ok=True)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Production-friendly default: respect FLASK_DEBUG env variable (default off)
+    debug_mode = os.getenv('FLASK_DEBUG', '0') == '1'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)

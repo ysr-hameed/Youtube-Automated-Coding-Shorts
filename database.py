@@ -9,6 +9,7 @@ class Database:
         self.conn = None
         self.mock_config = {}
         self.mock_history = []
+        self.mock_schedules = []
         self.init_db()
 
     def get_conn(self):
@@ -53,6 +54,18 @@ class Database:
             cur.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS uploaded BOOLEAN DEFAULT FALSE;")
             cur.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS youtube_id TEXT;")
             print("✅ Database Schema Initialized")
+
+            # Scheduled Runs table - store planned schedule for daily runs
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schedules (
+                    id SERIAL PRIMARY KEY,
+                    scheduled_at TIMESTAMP NOT NULL,
+                    executed BOOLEAN DEFAULT FALSE,
+                    executed_at TIMESTAMP,
+                    result JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
     # --- Config Methods ---
     def set_config(self, key, value):
@@ -109,6 +122,67 @@ class Database:
             entry.setdefault('youtube_id', None)
             self.mock_history.append(entry)
             return entry_id
+
+    # --- Schedule Methods ---
+    def add_schedule(self, scheduled_at):
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO schedules (scheduled_at) VALUES (%s) RETURNING id", (scheduled_at,))
+                try:
+                    new_id = cur.fetchone()[0]
+                except Exception:
+                    new_id = None
+                return new_id
+        else:
+            # Mock schedule
+            entry = {
+                'id': len(self.mock_schedules) + 1,
+                'scheduled_at': scheduled_at,
+                'executed': False,
+            }
+            self.mock_schedules.append(entry)
+            return entry['id']
+
+    def get_schedule_for_day(self, date):
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id, scheduled_at, executed, executed_at, result FROM schedules WHERE date_trunc('day', scheduled_at) = date_trunc('day', %s) ORDER BY scheduled_at", (date,))
+                return cur.fetchall()
+        else:
+            # Filter mock history entries
+            from datetime import datetime
+            result = []
+            for e in self.mock_schedules:
+                if isinstance(e.get('scheduled_at'), str):
+                    d = datetime.fromisoformat(e['scheduled_at'])
+                else:
+                    d = e.get('scheduled_at')
+                if d and d.date() == date.date():
+                    result.append({
+                        'id': e.get('id'),
+                        'scheduled_at': d,
+                        'executed': e.get('executed', False),
+                        'executed_at': e.get('executed_at'),
+                        'result': e.get('result')
+                    })
+            return result
+
+    def mark_schedule_executed(self, schedule_id, executed_at=None, result=None):
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE schedules SET executed = TRUE, executed_at = %s, result = %s WHERE id = %s", (executed_at, json.dumps(result) if result else None, schedule_id))
+                return True
+        else:
+            for e in self.mock_schedules:
+                if e.get('id') == schedule_id:
+                    e['executed'] = True
+                    e['executed_at'] = executed_at
+                    e['result'] = result
+                    return True
+            return False
 
     def get_recent_topics(self, limit=50):
         conn = self.get_conn()
