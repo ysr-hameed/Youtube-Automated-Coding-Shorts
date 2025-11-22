@@ -16,3 +16,4 @@ output/*.mp4
 *.log
 .vscode/
 .idea/
+.env
