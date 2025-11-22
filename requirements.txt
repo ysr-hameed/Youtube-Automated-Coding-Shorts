@@ -1,5 +1,4 @@
 Pillow
-pyaudioop
 opencv-python-headless
 numpy
 flask
