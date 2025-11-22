@@ -1,9 +1,18 @@
 import time
-import schedule
+try:
+    import schedule
+except Exception:
+    schedule = None
 import random
 from datetime import datetime, timedelta
-import pytz
-from video_generator import ShortsVideoGenerator
+try:
+    import pytz
+except Exception:
+    pytz = None
+try:
+    from video_generator import ShortsVideoGenerator
+except Exception:
+    ShortsVideoGenerator = None
 from content_manager import ContentManager
 from youtube_manager import YouTubeManager
 from publisher import process_and_upload
@@ -14,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 class AutoScheduler:
     def __init__(self):
         self.tz = pytz.timezone('Asia/Kolkata')
-        self.generator = ShortsVideoGenerator()
+        self.generator = ShortsVideoGenerator() if ShortsVideoGenerator else None
         self.content_mgr = ContentManager()
         self.youtube_mgr = YouTubeManager()
         self.last_upload_time = None
@@ -25,7 +34,10 @@ class AutoScheduler:
         """Create schedule entries for the current day, ensuring at least a 30 minute gap between runs.
         If schedules already exist for today, don't duplicate them. Return list of schedule dicts.
         """
-        today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        if pytz:
+            today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         existing = db.get_schedule_for_day(today)
         if existing and len(existing) >= count:
             return existing
@@ -69,7 +81,9 @@ class AutoScheduler:
                 print(f"🗓️ Scheduled (explicit): {s.get('scheduled_at').isoformat()} (id: {s.get('id')})")
             return scheduled
 
-        window_start = today + timedelta(hours=8)  # 8:00 IST
+        # If we're generating schedule during runtime, avoid creating times in the past for today
+        now = datetime.now(self.tz) if pytz else datetime.now()
+        window_start = max(today + timedelta(hours=8), now + timedelta(minutes=1))  # 8:00 IST or now+1m
         window_end = today + timedelta(hours=21)   # 21:00 IST
         total_minutes = int((window_end - window_start).total_seconds() // 60)
         # Determine minimum gap minutes and ensure count is valid
@@ -94,6 +108,9 @@ class AutoScheduler:
                 seg_end_min = seg_start_min + 1
             offset_min = rand.randint(seg_start_min, seg_end_min)
             scheduled_time = window_start + timedelta(minutes=offset_min)
+            # If scheduled time is already too close to now (shouldn't happen because window_start uses now), skip
+            if (scheduled_time - now).total_seconds() < 0:
+                continue
             # Persist schedule in DB
             sid = db.add_schedule(scheduled_time)
             scheduled.append({ 'id': sid, 'scheduled_at': scheduled_time, 'executed': False })
@@ -111,7 +128,7 @@ class AutoScheduler:
             count = 1
         self._generate_daily_schedule(count)
     # Run main loop checking schedule every 60 seconds
-        while True:
+    while True:
             # Regen schedule at start of new day
             today_date = datetime.now(self.tz).date()
             if getattr(self, 'current_day', None) != today_date:
@@ -126,6 +143,16 @@ class AutoScheduler:
                     if not s.get('executed') and s.get('scheduled_at') <= now:
                         # Run a scheduled job
                         print(f"⏰ Running scheduled job for {s.get('scheduled_at')}")
+                        # If a scheduled job is older than allowable 'miss' window we skip it to avoid re-running on restart
+                        try:
+                            allow_missed_seconds = int(os.getenv('SCHEDULE_ALLOW_MISSED_SECONDS', '300'))
+                        except Exception:
+                            allow_missed_seconds = 300
+                        if (now - s.get('scheduled_at')).total_seconds() > allow_missed_seconds:
+                            # mark as missed
+                            db.mark_schedule_executed(s.get('id'), executed_at=now, result={'success': False, 'error': 'missed'})
+                            print(f"⚠️ Scheduled job {s.get('id')} missed window; skipping")
+                            continue
                         # Check daily upload limit before starting the work
                         try:
                             daily_limit = int(os.getenv('DAILY_UPLOAD_LIMIT', '1'))

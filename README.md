@@ -130,6 +130,7 @@ Scheduler and upload limits:
 - `DAILY_SCHEDULE_TIMES`: optional, explicit comma-separated times (in IST HH:MM) to use instead of randomized scheduling. Example: `DAILY_SCHEDULE_TIMES=08:30,12:00,19:00`. If this is set, `DAILY_SCHEDULES` is ignored.
 - `SCHEDULE_TIMEOUT_SECONDS`: time in seconds to wait for a scheduled run to complete (default 600). Scheduled runs that exceed the timeout are marked as failed and will not be retried automatically.
  - `DAILY_MIN_GAP_MINUTES`: minimum minutes between scheduled runs (default 60, meaning runs are at least 1 hour apart).
+ - `SCHEDULE_ALLOW_MISSED_SECONDS`: scheduled jobs older than this many seconds when the server checks are considered missed and skipped (default 300 seconds). This prevents the scheduler from immediately running old tasks on restart.
 
 ### Database connection tuning
 

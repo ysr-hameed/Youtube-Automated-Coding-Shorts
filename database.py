@@ -90,6 +90,9 @@ class Database:
                 logging.info('⚠️ Database unavailable at startup; falling back to mock storage')
 
     def get_conn(self):
+        # If we don't have a DB url configured, skip attempts
+        if not getattr(self, 'db_url', None):
+            return None
         # If we've marked DB as unavailable until a certain time (throttled), skip attempts
         now_ts = time.time()
         if now_ts < getattr(self, '_db_unavailable_until', 0):
