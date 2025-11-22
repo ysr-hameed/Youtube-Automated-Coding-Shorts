@@ -82,6 +82,9 @@ class ShortsVideoGenerator:
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
 
+        # Try loading keyboard samples from audio/keys
+        self.key_samples = self._load_key_samples()
+
         # Check audio capabilities
         self.ffmpeg_available = shutil.which('ffmpeg') is not None
         if not PYDUB_AVAILABLE:
@@ -90,6 +93,32 @@ class ShortsVideoGenerator:
             logging.warning("ffmpeg not found in PATH. Audio generation is disabled.")
 
         self.audio_enabled = PYDUB_AVAILABLE and self.ffmpeg_available
+        """Return a list of file paths to keyboard sound samples under audio/keys/ (mp3/wav/ogg)."""
+        samples_dir = os.path.join(self.audio_dir, 'keys')
+        if not os.path.exists(samples_dir):
+            return []
+        files = []
+        for fname in os.listdir(samples_dir):
+            lc = fname.lower()
+            if lc.endswith('.wav') or lc.endswith('.mp3') or lc.endswith('.ogg'):
+                files.append(os.path.join(samples_dir, fname))
+        return files
+
+        def _find_background_file(self):
+            candidates = ['background.mp3', 'background.wav', 'background.ogg']
+            for c in candidates:
+                path = os.path.join(self.audio_dir, c)
+                if os.path.exists(path):
+                    return path
+            return None
+
+        def _find_enter_sample(self):
+            candidates = ['enter.mp3', 'enter.wav', 'enter.ogg']
+            for c in candidates:
+                path = os.path.join(self.audio_dir, c)
+                if os.path.exists(path):
+                    return path
+            return None
 
     def get_font(self, size, bold=False):
         try:
@@ -329,8 +358,15 @@ class ShortsVideoGenerator:
             for _ in range(frames_per_char_question):
                 frames.append(img)
 
-            # Key sound
-            # omit click sound events to avoid keyboard noise
+            # Key sound events: append 'key' event (sample index) or fall back to click
+            if char.strip() and self.audio_enabled:
+                if self.key_samples:
+                    sample_idx = random.randrange(0, len(self.key_samples))
+                    time_ms = int((len(frames) / self.fps) * 1000)
+                    audio_events.append((time_ms, 'key', sample_idx))
+                else:
+                    time_ms = int((len(frames) / self.fps) * 1000)
+                    audio_events.append((time_ms, 'click', None))
 
         # Hold after question
         for _ in range(15): frames.append(frames[-1])
@@ -440,7 +476,15 @@ class ShortsVideoGenerator:
                 for _ in range(frames_per_char_code):
                     frames.append(img)
                 
-                # omit click sound events to avoid keyboard noise
+                # Key sound events for code typing
+                if char.strip() and self.audio_enabled:
+                    if self.key_samples:
+                        sample_idx = random.randrange(0, len(self.key_samples))
+                        time_ms = int((len(frames) / self.fps) * 1000)
+                        audio_events.append((time_ms, 'key', sample_idx))
+                    else:
+                        time_ms = int((len(frames) / self.fps) * 1000)
+                        audio_events.append((time_ms, 'click', None))
             
             # Newline pause
             for _ in range(5): frames.append(frames[-1])
@@ -512,7 +556,20 @@ class ShortsVideoGenerator:
             frames.append(img)
             frames.append(img) # Slow typing
             
+            # Key sound for terminal typing
+            if char.strip() and self.audio_enabled:
+                if self.key_samples:
+                    sample_idx = random.randrange(0, len(self.key_samples))
+                    time_ms = int((len(frames) / self.fps) * 1000)
+                    audio_events.append((time_ms, 'key', sample_idx))
+                else:
+                    time_ms = int((len(frames) / self.fps) * 1000)
+                    audio_events.append((time_ms, 'click', None))
 
+        # Enter sound after command
+        if self.audio_enabled:
+            time_ms = int((len(frames) / self.fps) * 1000)
+            audio_events.append((time_ms, 'enter', None))
     # No enter sound (keyboard noises disabled)
 
         # Show Result
@@ -546,10 +603,27 @@ class ShortsVideoGenerator:
         total_duration = len(frames) / self.fps * 1000
         if self.audio_enabled:
             final_audio = AudioSegment.silent(duration=total_duration)
-            # Add gentle background music for the entire video
-            bg_music = self.create_background_music(total_duration)
-            if bg_music is not None:
-                final_audio = final_audio.overlay(bg_music)
+            bg_file = self._find_background_file() if hasattr(self, '_find_background_file') else None
+            if bg_file and os.path.exists(bg_file):
+                try:
+                    bg = AudioSegment.from_file(bg_file)
+                    # Loop background if it's shorter than total duration
+                    if len(bg) < total_duration:
+                        times = (int(total_duration) // len(bg)) + 1
+                        bg = bg * times
+                    bg = bg[:int(total_duration)]
+                    bg = bg.apply_gain(-18)
+                    final_audio = final_audio.overlay(bg)
+                except Exception as e:
+                    logging.warning(f"Failed to load custom background {bg_file}: {e}")
+                    # Fallback to synthesized music
+                    bg_music = self.create_background_music(total_duration)
+                    if bg_music is not None:
+                        final_audio = final_audio.overlay(bg_music)
+            else:
+                bg_music = self.create_background_music(total_duration)
+                if bg_music is not None:
+                    final_audio = final_audio.overlay(bg_music)
         else:
             final_audio = None
         
@@ -557,10 +631,29 @@ class ShortsVideoGenerator:
         # Make clicks a bit softer so background music sits under them
         if click_sound is not None:
             click_sound = click_sound.apply_gain(-6)
-        enter_sound = self.create_enter_sound()
+        # Prefer an enter sample file if present, otherwise use synthesized enter sound
+        enter_sample = None
+        enter_file = self._find_enter_sample() if hasattr(self, '_find_enter_sample') else None
+        if enter_file and self.audio_enabled:
+            try:
+                enter_sample = AudioSegment.from_file(enter_file)
+            except Exception:
+                enter_sample = None
+        enter_sound = enter_sample if enter_sample is not None else self.create_enter_sound()
         
-        # If audio is not enabled, skip mixing entirely
+    # If audio is not enabled, skip mixing entirely
         if self.audio_enabled:
+            # Prepare background file (prefer user-provided file, otherwise keep already added bg_music)
+            bg_file = self._find_background_file() if hasattr(self, '_find_background_file') else None
+            if bg_file and os.path.exists(bg_file):
+                try:
+                    bg = AudioSegment.from_file(bg_file)
+                    # Reduce background track volume substantially
+                    bg = bg.apply_gain(-18)
+                    final_audio = final_audio.overlay(bg)
+                except Exception as e:
+                    logging.warning(f"Failed to load custom background {bg_file}: {e}")
+
             for time_ms, type, data in audio_events:
                 try:
                     if type == 'tts' and data:
@@ -569,6 +662,15 @@ class ShortsVideoGenerator:
                         sound = click_sound
                     elif type == 'enter':
                         sound = enter_sound
+                    elif type == 'key':
+                        # data is index into self.key_samples
+                        if self.key_samples and isinstance(data, int) and data < len(self.key_samples):
+                            sample_path = self.key_samples[data]
+                            sound = AudioSegment.from_file(sample_path)
+                            # Soften the key sample so it doesn't overpower the mix
+                            sound = sound.apply_gain(-10)
+                        else:
+                            sound = click_sound
                     else:
                         continue
                 except Exception as e:

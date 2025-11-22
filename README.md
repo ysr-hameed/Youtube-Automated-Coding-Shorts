@@ -166,6 +166,12 @@ You can also run a quick environment check to see if necessary binaries and pack
 python tools/check_audio_env.py
 ```
 
+Audio customization
+- Add your keyboard samples in `audio/keys/` (small .wav or .mp3 files) to enable realistic keyboard sound during typing. We will randomly pick samples for each keystroke.
+ - Add your keyboard samples in `audio/keys/` (small .wav or .mp3 files) to enable realistic keyboard sound during typing. We will randomly pick samples for each keystroke. Aim for very short keypress files (30-100ms) for best results.
+- Add `audio/background.mp3` (or .wav/.ogg) to include an ambient background music track at low volume across the video. If not present, the tool falls back to a synthesized ambient pad.
+- Optional: Add `audio/enter.mp3` to use a realistic enter key sound instead of the synthesized one.
+
 **Web interface not loading:**
 - Make sure Flask is running
 - Check port 5000 is not in use
