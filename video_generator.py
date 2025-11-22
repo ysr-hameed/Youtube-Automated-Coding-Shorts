@@ -284,8 +284,6 @@ class ShortsVideoGenerator:
             
             # Filename
             draw.text((self.width//2 - 100, header_y - 5), "index.js", font=font_header, fill=self.colors['comment'])
-            small_font = self.get_font(28)
-            draw.text((self.width//2 + 40, header_y + 6), "ViralShorts AI", font=small_font, fill=self.colors['comment'])
             return img, draw
 
         # --- PHASE 2: QUESTION TYPING (Synced with TTS) ---
@@ -301,29 +299,36 @@ class ShortsVideoGenerator:
         # Flatten wrapped lines for typing calculation
         flat_question = "\n".join(wrapped_question)
         
+        # We'll compute a dynamic code start Y after we know the question height
+        # Create a temporary draw context to measure text height
+        img_tmp, draw_tmp = create_bg()
+        q_line_h = draw_tmp.textbbox((0,0), "Ay", font=font_question)[3] - draw_tmp.textbbox((0,0), "Ay", font=font_question)[1]
+        question_height_px = q_line_h * max(1, len(wrapped_question)) + 20
+        code_y = question_y + question_height_px + 40
+
         for char in flat_question:
             img, draw = create_bg()
-            
+
             # Draw typed question so far
             current_q_text += char
-            
+
             # We need to re-wrap the current text to draw it correctly line by line
             # This is a bit inefficient but ensures correct wrapping animation
             curr_lines = current_q_text.split('\n')
-            
+
             y = question_y
             for line in curr_lines:
                 draw.text((margin_x, y), line, font=font_question, fill=self.colors['keyword']) # Purple question
                 y += 80
-            
+
             # Cursor
             cursor_pos = draw.textlength(curr_lines[-1], font=font_question)
             draw.text((margin_x + cursor_pos, y - 80), self.cursor_style, font=font_question, fill=self.colors['cursor'])
-            
+
             # Add frames
             for _ in range(frames_per_char_question):
                 frames.append(img)
-            
+
             # Key sound
             # omit click sound events to avoid keyboard noise
 
