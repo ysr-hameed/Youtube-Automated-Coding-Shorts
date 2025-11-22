@@ -157,28 +157,36 @@ class ShortsVideoGenerator:
         return music.fade_in(500).fade_out(500)
 
     def tokenize_code(self, line):
-        """Simple regex-based tokenizer for syntax highlighting"""
-        tokens = []
-        # Regex patterns for syntax
-        patterns = [
-            (r'(function|const|let|var|return|if|else|for|while|console|log|await|async|import|from)\b', 'keyword'),
-            (r'(".*?"|\'.*?\')', 'string'),
-            (r'\b(\d+)\b', 'number'),
-            (r'(\/\/.*)', 'comment'),
-            (r'([+\-*/%=<>!&|]+)', 'operator'),
-            (r'(\w+)(?=\()', 'function'), # Word followed by (
-            (r'([(){}\[\];,])', 'bracket'),
-            (r'(\w+)', 'bracket') # Default identifier
+        """Tokenize a code line into [(token, type), ...] for colorized rendering.
+        Returns a list of tuples where type is one of the keys in `self.colors`.
+        """
+        if not line:
+            return []
+
+        token_specs = [
+            ('keyword', r'\b(function|const|let|var|return|if|else|for|while|console|log|await|async|import|from)\b'),
+            ('string', r'(".*?"|\'.*?\')'),
+            ('number', r'\b(\d+)\b'),
+            ('comment', r'(//.*)'),
+            ('operator', r'([+\-*/%=<>!&|]+)'),
+            ('function', r'(\w+)(?=\()'),
+            ('bracket', r'([(){}\[\];,])')
         ]
-        
-        # Very basic parsing (for demonstration speed)
-        # In a real app, we'd iterate char by char or use a lexer
-        # Here we'll just split by space and try to match for simplicity in video generation
-        # A better approach for video is to just colorize known words
-        
-        # Let's stick to the previous robust regex method but simplified for this context
-        # We will just draw the line character by character in the main loop to ensure perfect typing
-        return line
+
+        combined = '|'.join(f"(?P<{name}>{pattern})" for name, pattern in token_specs)
+        regex = re.compile(combined)
+
+        tokens = []
+        last_end = 0
+        for m in regex.finditer(line):
+            if m.start() > last_end:
+                tokens.append((line[last_end:m.start()], 'default'))
+            gname = m.lastgroup
+            tokens.append((m.group(0), gname))
+            last_end = m.end()
+        if last_end < len(line):
+            tokens.append((line[last_end:], 'default'))
+        return tokens
 
     def wrap_line_by_width(self, draw, line, font, max_width):
         """Wrap a single line of text into multiple lines so that each fits within max_width (pixels).
@@ -256,10 +264,10 @@ class ShortsVideoGenerator:
         font_header = self.get_font(40)
         font_terminal = self.get_font(42)
         
-        margin_x = 60
+        margin_x = 32
         header_y = 100
         question_y = 200
-        code_y = 500 # Start code lower to give space for question
+        code_y = 380 # Start code lower to give space for question
         
         # --- PHASE 1: HEADER & BACKGROUND ---
         def create_bg():
@@ -267,8 +275,8 @@ class ShortsVideoGenerator:
             draw = ImageDraw.Draw(img)
             
             # Mac Dots (Huge)
-            dot_size = 25
-            dot_spacing = 60
+            dot_size = 40
+            dot_spacing = 80
             start_x = margin_x
             for i, color in enumerate(self.mac_colors):
                 x = start_x + (i * dot_spacing)
@@ -276,6 +284,8 @@ class ShortsVideoGenerator:
             
             # Filename
             draw.text((self.width//2 - 100, header_y - 5), "index.js", font=font_header, fill=self.colors['comment'])
+            small_font = self.get_font(28)
+            draw.text((self.width//2 + 40, header_y + 6), "ViralShorts AI", font=small_font, fill=self.colors['comment'])
             return img, draw
 
         # --- PHASE 2: QUESTION TYPING (Synced with TTS) ---
@@ -315,9 +325,7 @@ class ShortsVideoGenerator:
                 frames.append(img)
             
             # Key sound
-            if char.strip():
-                time_ms = int((len(frames) / self.fps) * 1000)
-                audio_events.append((time_ms, 'click', None))
+            # omit click sound events to avoid keyboard noise
 
         # Hold after question
         for _ in range(15): frames.append(frames[-1])
@@ -404,29 +412,35 @@ class ShortsVideoGenerator:
                     # draw.text((margin_x, cy), "1", font=font_code, fill=self.colors['comment'])
                     
                     # Draw code text (handle wrapped lines)
-                    for sub in wrapped_sub:
-                        draw.text((margin_x + 60, cy), sub, font=font_code, fill=self.text_color)
+                    for wi, sub in enumerate(wrapped_sub):
+                        # Draw line number only for the first wrapped subline
+                        if wi == 0:
+                            line_num = str(idx + 1)
+                            draw.text((margin_x, cy), line_num, font=font_code, fill=self.colors['comment'])
+                        # Colorize via tokens
+                        tokens = self.tokenize_code(sub)
+                        x = margin_x + 50
+                        for token, typ in tokens:
+                            color = self.colors.get(typ, self.text_color)
+                            draw.text((x, cy), token, font=font_code, fill=color)
+                            x += draw.textlength(token, font=font_code)
                         cy += 70
                 
                 # Cursor
                 # Compute cursor position considering wrapping of the last line
                 last_wrapped = wrap_code_line(draw, current_code_lines[-1], font_code, max_code_width_px)
                 last_line_width = draw.textlength(last_wrapped[-1], font=font_code) if last_wrapped else 0
-                draw.text((margin_x + 60 + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
+                draw.text((margin_x + 50 + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
                 
                 for _ in range(frames_per_char_code):
                     frames.append(img)
                 
-                if char.strip():
-                    time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'click', None))
+                # omit click sound events to avoid keyboard noise
             
             # Newline pause
             for _ in range(5): frames.append(frames[-1])
 
-        # Enter Sound after code
-        time_ms = int((len(frames) / self.fps) * 1000)
-        audio_events.append((time_ms, 'enter', None))
+    # No enter/keyboard sounds: omit enter sound
         
         # --- PHASE 4: TERMINAL EXECUTION ---
         # Slide up terminal
@@ -442,10 +456,18 @@ class ShortsVideoGenerator:
                 draw.text((margin_x, y), q_line, font=font_question, fill=self.colors['keyword'])
                 y += 80
             cy = code_y
-            for c_line in current_code_lines:
+            for idx, c_line in enumerate(current_code_lines):
                 wrapped_sub = wrap_code_line(draw, c_line, font_code, max_code_width_px)
-                for sub in wrapped_sub:
-                    draw.text((margin_x + 60, cy), sub, font=font_code, fill=self.text_color)
+                for wi, sub in enumerate(wrapped_sub):
+                    if wi == 0:
+                        line_num = str(idx + 1)
+                        draw.text((margin_x, cy), line_num, font=font_code, fill=self.colors['comment'])
+                    tokens = self.tokenize_code(sub)
+                    x = margin_x + 50
+                    for token, typ in tokens:
+                        color = self.colors.get(typ, self.text_color)
+                        draw.text((x, cy), token, font=font_code, fill=color)
+                        x += draw.textlength(token, font=font_code)
                     cy += 70
                 
             # Draw Terminal Box
@@ -485,13 +507,8 @@ class ShortsVideoGenerator:
             frames.append(img)
             frames.append(img) # Slow typing
             
-            if char.strip():
-                time_ms = int((len(frames) / self.fps) * 1000)
-                audio_events.append((time_ms, 'click', None))
 
-        # Enter sound
-        time_ms = int((len(frames) / self.fps) * 1000)
-        audio_events.append((time_ms, 'enter', None))
+    # No enter sound (keyboard noises disabled)
 
         # Show Result
         output_lines = real_output.split('\n')

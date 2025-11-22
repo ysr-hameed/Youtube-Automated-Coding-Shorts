@@ -91,23 +91,10 @@ def ai_generate():
             return jsonify({"success": False, "error": result.get('error', 'Generation failed')}), 500
         video_path = result.get('video_path')
 
-        # Attempt to upload if user authorized and auto_upload requested
-        uploaded = False
-        video_id = None
-        upload_error = None
-        if auto_upload and youtube_mgr.is_authenticated():
-            try:
-                # Ensure YouTube client is ready (refresh if needed)
-                youtube_mgr.authenticate()
-                video_id = youtube_mgr.upload_video(
-                    video_path,
-                    content['title'],
-                    content['description'],
-                    content['tags']
-                )
-                uploaded = True
-            except Exception as e:
-                upload_error = str(e)
+        # The upload was handled inside process_and_upload; use results
+        uploaded = result.get('uploaded', False)
+        video_id = result.get('youtube_id')
+        upload_error = result.get('upload_error')
 
         return jsonify({
             "success": True,

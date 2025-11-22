@@ -32,9 +32,10 @@ class ContentManager:
         Context (DO NOT USE THESE TOPICS):
         {', '.join(past_topics)}
         
-        Requirements:
+    Requirements:
         1. Code must be short (max 10 lines) and visually clean.
         2. Question must be engaging (e.g., "Can you fix this?", "What's the output?").
+    2b. Question must be a short hook (no more than 12 words).
         3. Title MUST include 2-3 viral hashtags like #shorts #coding #javascript.
         4. Description must be SEO friendly with keywords.
         
@@ -65,6 +66,12 @@ class ContentManager:
                 # Validate content fields
                 if not content.get('topic') or not content.get('code') or not content.get('question'):
                     print("AI returned incomplete content. Trying again...")
+                    continue
+
+                # Ensure the question is short and hook-like (<= 12 words)
+                q_words = len(content['question'].split())
+                if q_words > 12:
+                    print(f"AI returned long question ({q_words} words). Trying again...")
                     continue
 
                 # Avoid obvious duplicate topics using simple matching
