@@ -36,13 +36,33 @@ class AutoScheduler:
         if times_env:
             times_list = [t.strip() for t in times_env.split(',') if t.strip()]
             scheduled = []
+            # Parse provided explicit times and apply min gap constraint
+            parsed_times = []
+            for t in times_list:
+                try:
+                    hh, mm = [int(x) for x in t.split(':')]
+                    dt = today + timedelta(hours=hh, minutes=mm)
+                    parsed_times.append(dt)
+                except Exception:
+                    continue
+            parsed_times = sorted(parsed_times)
+            # Enforce min_gap_minutes between explicit times
+            try:
+                min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '60'))
+            except Exception:
+                min_gap_minutes = 60
+            last_added = None
             for t in times_list:
                 try:
                     hh, mm = [int(x) for x in t.split(':')]
                     scheduled_time = today + timedelta(hours=hh, minutes=mm)
-                    # Persist schedule in DB if not existing
+                    # Skip times less than min gap from the last added time
+                    if last_added and (scheduled_time - last_added).total_seconds() < min_gap_minutes * 60:
+                        logging.warning(f"Explicit schedule {scheduled_time.isoformat()} too close to previous schedule; skipped (min gap {min_gap_minutes}m)")
+                        continue
                     sid = db.add_schedule(scheduled_time)
                     scheduled.append({ 'id': sid, 'scheduled_at': scheduled_time, 'executed': False })
+                    last_added = scheduled_time
                 except Exception:
                     continue
             for s in scheduled:
@@ -52,11 +72,15 @@ class AutoScheduler:
         window_start = today + timedelta(hours=8)  # 8:00 IST
         window_end = today + timedelta(hours=21)   # 21:00 IST
         total_minutes = int((window_end - window_start).total_seconds() // 60)
-        # If count is more than feasible with 30 minute gaps, we still distribute evenly
+        # Determine minimum gap minutes and ensure count is valid
+        try:
+            min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '60'))
+        except Exception:
+            min_gap_minutes = 60
         if count <= 0:
             count = 1
-        # Ensure minimum 30 minute gap
-        max_count = total_minutes // 30
+        # Ensure minimum gap
+        max_count = total_minutes // min_gap_minutes
         if count > max_count and max_count > 0:
             count = max_count
         segment = total_minutes // count

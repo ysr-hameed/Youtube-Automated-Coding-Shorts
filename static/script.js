@@ -128,11 +128,22 @@ async function refreshSchedule() {
         const items = schedules.map(s => {
             const scheduledAt = new Date(s.scheduled_at);
             const executedAt = s.executed_at ? new Date(s.executed_at) : null;
-            const tzOptions = { timeZone: 'Asia/Kolkata', hour12: false };
+            const tzOptions = { timeZone: 'Asia/Kolkata', hour12: true };
             const scheduledStr = scheduledAt.toLocaleTimeString(undefined, tzOptions);
             const executedStr = executedAt ? executedAt.toLocaleTimeString(undefined, tzOptions) : null;
-            const status = s.executed ? `✅ Executed at ${executedStr || 'unknown'} (IST)` : 'Scheduled (IST)';
-            return `<div class="schedule-item">${scheduledStr} — ${status}</div>`;
+            let status = s.executed ? `✅ Executed at ${executedStr || 'unknown'} (IST)` : 'Scheduled (IST)';
+            let extra = '';
+            if (s.result && s.result.error) {
+                const err = s.result.error;
+                if (err.toLowerCase().includes('ai')) {
+                    extra = '<span class="schedule-error"> - Failed by AI</span>';
+                } else if (s.result.timeout) {
+                    extra = '<span class="schedule-error"> - Timed out</span>';
+                } else {
+                    extra = `<span class="schedule-error"> - ${err}</span>`;
+                }
+            }
+            return `<div class="schedule-item">${scheduledStr} — ${status}${extra}</div>`;
         });
         list.innerHTML = items.join('');
     } catch (e) {

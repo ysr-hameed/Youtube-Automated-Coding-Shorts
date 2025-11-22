@@ -129,6 +129,20 @@ Scheduler and upload limits:
 - `DAILY_SCHEDULES`: number of randomized runs per day (default 1). Schedules are randomly assigned between 8:00 and 21:00 IST with a minimum of 30 minutes gap.
 - `DAILY_SCHEDULE_TIMES`: optional, explicit comma-separated times (in IST HH:MM) to use instead of randomized scheduling. Example: `DAILY_SCHEDULE_TIMES=08:30,12:00,19:00`. If this is set, `DAILY_SCHEDULES` is ignored.
 - `SCHEDULE_TIMEOUT_SECONDS`: time in seconds to wait for a scheduled run to complete (default 600). Scheduled runs that exceed the timeout are marked as failed and will not be retried automatically.
+ - `DAILY_MIN_GAP_MINUTES`: minimum minutes between scheduled runs (default 60, meaning runs are at least 1 hour apart).
+
+### Database connection tuning
+
+- `DB_CONNECT_TIMEOUT`: maximum seconds to wait while establishing a connection to Postgres (default 10).
+- `DB_RETRIES`: number of attempts to retry the connection before falling back to in-memory mock (default 3).
+- `DB_RETRY_DELAY`: seconds to wait between retries (default 2).
+ - `DB_VALIDATE_ON_START`: validate DB connectivity on startup (default true). If true, the app attempts to connect once to verify credentials; if unreachable, the app falls back to mock storage and logs a message.
+ - `DB_VALIDATE_ON_START`: validate DB connectivity on startup (default true). If true, the app attempts to connect once to verify credentials; if unreachable, the app falls back to mock storage and logs a message.
+ - `DB_CONNECT_AFTER_START`: boolean to control whether to attempt a background DB connection after the server starts (useful to let networking come up before connecting). Default true.
+ - `DB_CONNECT_AFTER_START_DELAY`: seconds to delay the after-start DB connection attempt (default 10)
+ - `DB_LOG_SUPPRESSION_SECONDS`: number of seconds to suppress repeated database connection error logs after the first failure. This helps keep logs readable if DB is temporarily down or has auth issues.
+
+If DB is unavailable, the app will fall back to in-memory mock storage to keep running; however, persistence will be lost until a DB connection becomes available.
 
 When the server starts it will ensure that today's schedule is created and persisted in the database and the UI will display scheduled times for the day.
 

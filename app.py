@@ -50,6 +50,25 @@ if os.getenv('ENABLE_SCHEDULER', 'true').lower() == 'true':
     except Exception as e:
         logging.warning(f'Failed to start scheduler in background: {e}')
 
+# Optionally attempt DB connect after server start to avoid initial network/DNS availability issues
+if os.getenv('DB_CONNECT_AFTER_START', 'true').lower() in ('1', 'true', 'yes'):
+    def _delayed_db_connect():
+        try:
+            delay = int(os.getenv('DB_CONNECT_AFTER_START_DELAY', '10'))
+        except Exception:
+            delay = 10
+        import time as _t
+        _t.sleep(delay)
+        try:
+            conn = db.get_conn()
+            logging.info('Background DB connect attempted; connected=%s', bool(conn))
+        except Exception as e:
+            logging.warning(f'Background DB connect failed: {e}')
+    try:
+        threading.Thread(target=_delayed_db_connect, daemon=True).start()
+    except Exception:
+        pass
+
 @app.route('/')
 def index():
     return send_file('static/index.html')
@@ -152,12 +171,23 @@ def auth_status():
 @app.route('/api/health', methods=['GET'])
 def health():
     try:
-        return jsonify({
-            "ok": True,
-            "audio_enabled": generator.audio_enabled,
-        })
+        status = {"ok": True, "audio_enabled": generator.audio_enabled}
+        try:
+            status['db'] = db.get_status()
+        except Exception as e:
+            status['db'] = {'connected': False, 'error': str(e)}
+        return jsonify(status)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/db/reconnect', methods=['POST'])
+def db_reconnect():
+    try:
+        db.force_reconnect()
+        return jsonify({'success': True, 'message': 'Reconnection attempted (check /api/health for status)'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/cron/generate', methods=['GET'])

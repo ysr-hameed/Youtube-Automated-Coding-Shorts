@@ -146,37 +146,38 @@ class ShortsVideoGenerator:
         rand = random.Random()
         rand.seed(time.time_ns())
         # Body frequency (thock) and a harmonic; lower for deeper key feel
-        body_freq = rand.choice([110, 120, 140, 150, 170]) + rand.randint(-3, 3)
-        body = Sine(body_freq).to_audio_segment(duration=70).apply_gain(-18 + rand.randint(-2, 2))
-        body2 = Sine(int(body_freq * 2.05)).to_audio_segment(duration=80).apply_gain(-22 + rand.randint(-2, 2))
-        # Short high transient to simulate the 'click' on press
-        transient_freq = rand.choice([1800, 2200, 2800, 3200]) + rand.randint(-100, 100)
-        transient = Sine(transient_freq).to_audio_segment(duration=25).apply_gain(-6 + rand.randint(-3, 0))
-        # Subtle metallic/air noise for the click - very short
-        noise = WhiteNoise().to_audio_segment(duration=35).apply_gain(-28 + rand.randint(-3, 2))
-        # Variants: a tiny pitch sweep effect by layering slightly detuned transient
-        transient2 = Sine(transient_freq + rand.randint(30, 80)).to_audio_segment(duration=18).apply_gain(-12 + rand.randint(-2, 1))
-        # Combine layers, fade out to keep it tight
+        # add a tiny envelope by layering two low pulses with slightly different lengths
+        body_freq = rand.choice([100, 110, 125, 140, 150]) + rand.randint(-3, 3)
+        body = Sine(body_freq).to_audio_segment(duration=90).apply_gain(-16 + rand.randint(-3, 1))
+        body2 = Sine(int(body_freq * 2.02)).to_audio_segment(duration=110).apply_gain(-22 + rand.randint(-2, 2))
+        # ping transient: high-frequency spike for the 'click' attack
+        transient_freq = rand.choice([1600, 2000, 2400, 2800, 3200]) + rand.randint(-50, 50)
+        # create a pair of very short transients with slight detune and a fast decay to emulate metallic bite
+        transient = Sine(transient_freq).to_audio_segment(duration=12).apply_gain(-4 + rand.randint(-3, 1))
+        transient2 = Sine(transient_freq + rand.choice([40, 60, 80])).to_audio_segment(duration=10).apply_gain(-8 + rand.randint(-4, 1))
+        # short noise to make it more organic
+        noise = WhiteNoise().to_audio_segment(duration=45).apply_gain(-30 + rand.randint(-3, 3))
+        # combine with transient variations for more 'click' complexity
         sound = body.overlay(body2).overlay(transient).overlay(transient2).overlay(noise)
         # Slight fade for natural decay
-        return sound.fade_in(5).fade_out(70)
+        return sound.fade_in(2).fade_out(120)
 
     def create_random_key_click(self):
         """Synthesize a short key press sound with randomized parameters to avoid repetition."""
         if not self.audio_enabled:
             return None
-        # Randomize frequency for slight timbral changes
+        # Randomize frequency and envelope for timbral changes
         rand = random.Random()
         rand.seed(time.time_ns())
-        freq = rand.choice([300, 350, 380, 420, 460, 500]) + rand.randint(-8, 8)
-        dur = rand.choice([22, 26, 30, 34, 38])
+        freq = rand.choice([300, 340, 380, 420, 460, 500]) + rand.randint(-8, 8)
+        dur = rand.choice([18, 22, 26, 30, 34])
         # Small two-tone body with detune
-        tone = Sine(freq).to_audio_segment(duration=dur).apply_gain(-16 + rand.randint(-3, 0))
-        tone2 = Sine(int(freq * 1.12)).to_audio_segment(duration=dur + 8).apply_gain(-22 + rand.randint(-3, 1))
-        click = WhiteNoise().to_audio_segment(duration=max(8, dur//3)).apply_gain(-26 + rand.randint(-3, 2))
-        # High transient for bite
-        transient = Sine(rand.choice([1800, 2200, 2600])).to_audio_segment(duration=10).apply_gain(-8 + rand.randint(-2, 1))
-        sound = tone.overlay(tone2).overlay(click).overlay(transient)
+        tone = Sine(freq).to_audio_segment(duration=dur).apply_gain(-14 + rand.randint(-3, 1))
+        tone2 = Sine(int(freq * 1.12)).to_audio_segment(duration=dur + 6).apply_gain(-20 + rand.randint(-3, 1))
+        amber = Sine(int(freq * 0.5)).to_audio_segment(duration=int(dur*1.6)).apply_gain(-26 + rand.randint(-2, 2))
+        click = WhiteNoise().to_audio_segment(duration=max(6, dur//4)).apply_gain(-26 + rand.randint(-3, 2))
+        transient = Sine(rand.choice([2000, 2200, 2600, 3000])).to_audio_segment(duration=8).apply_gain(-7 + rand.randint(-2, 1))
+        sound = tone.overlay(tone2).overlay(amber).overlay(click).overlay(transient)
         return sound.fade_out(10)
 
     def create_enter_sound(self):
@@ -699,9 +700,19 @@ class ShortsVideoGenerator:
                         # data is index into self.key_samples
                         if self.key_samples and isinstance(data, int) and data < len(self.key_samples):
                             sample_path = self.key_samples[data]
-                            sound = AudioSegment.from_file(sample_path)
-                            # Soften the key sample so it doesn't overpower the mix
-                            sound = sound.apply_gain(-12)
+                            try:
+                                sound = AudioSegment.from_file(sample_path)
+                                # Soften and slightly randomize the key sample (gain and speed) to avoid identical clicks
+                                sound = sound.apply_gain(-12 + random.randint(-2, 1))
+                                try:
+                                    from pydub import effects
+                                    speed = 1.0 + (random.random() - 0.5) * 0.04  # +/- 2% speed variation
+                                    sound = effects.speedup(sound, playback_speed=speed)
+                                except Exception:
+                                    pass
+                            except Exception as e:
+                                logging.warning(f"Failed to load key sample {sample_path}: {e}")
+                                sound = None
                         else:
                             # Prefer a mechanical click fallback the majority of the time but add variety
                             if click_sound and random.random() < 0.8:
