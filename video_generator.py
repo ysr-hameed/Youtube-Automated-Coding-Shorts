@@ -16,6 +16,7 @@ except Exception:
 
 from gtts import gTTS
 import subprocess
+import time
 import tempfile
 import re
 import json
@@ -83,8 +84,8 @@ class ShortsVideoGenerator:
         os.makedirs(self.audio_dir, exist_ok=True)
 
         # Try loading keyboard samples from audio/keys
-        self.key_samples = self._load_key_samples()
-
+        self.key_samples = []
+        
         # Check audio capabilities
         self.ffmpeg_available = shutil.which('ffmpeg') is not None
         if not PYDUB_AVAILABLE:
@@ -93,6 +94,14 @@ class ShortsVideoGenerator:
             logging.warning("ffmpeg not found in PATH. Audio generation is disabled.")
 
         self.audio_enabled = PYDUB_AVAILABLE and self.ffmpeg_available
+        # Now load key samples (method exists below)
+        try:
+            self.key_samples = self._load_key_samples()
+        except Exception:
+            self.key_samples = []
+        # Key samples will be loaded after initialization (below) using a method to avoid attribute errors
+
+    def _load_key_samples(self):
         """Return a list of file paths to keyboard sound samples under audio/keys/ (mp3/wav/ogg)."""
         samples_dir = os.path.join(self.audio_dir, 'keys')
         if not os.path.exists(samples_dir):
@@ -104,7 +113,7 @@ class ShortsVideoGenerator:
                 files.append(os.path.join(samples_dir, fname))
         return files
 
-        def _find_background_file(self):
+    def _find_background_file(self):
             candidates = ['background.mp3', 'background.wav', 'background.ogg']
             for c in candidates:
                 path = os.path.join(self.audio_dir, c)
@@ -112,7 +121,7 @@ class ShortsVideoGenerator:
                     return path
             return None
 
-        def _find_enter_sample(self):
+    def _find_enter_sample(self):
             candidates = ['enter.mp3', 'enter.wav', 'enter.ogg']
             for c in candidates:
                 path = os.path.join(self.audio_dir, c)
@@ -140,6 +149,18 @@ class ShortsVideoGenerator:
         sound = tone.overlay(click)
         return sound.fade_out(10)
 
+    def create_random_key_click(self):
+        """Synthesize a short key press sound with randomized parameters to avoid repetition."""
+        if not self.audio_enabled:
+            return None
+        # Randomize frequency for slight timbral changes
+        freq = random.choice([300, 350, 400, 450, 500, 550]) + random.randint(-10, 10)
+        dur = random.choice([25, 30, 35, 40])
+        tone = Sine(freq).to_audio_segment(duration=dur).apply_gain(-8 + random.randint(-3, 0))
+        click = WhiteNoise().to_audio_segment(duration=max(10, dur//2)).apply_gain(-15)
+        sound = tone.overlay(click)
+        return sound.fade_out(10)
+
     def create_enter_sound(self):
         """Synthesize a heavier enter key sound"""
         if not self.audio_enabled:
@@ -150,23 +171,8 @@ class ShortsVideoGenerator:
         sound = tone.overlay(click)
         return sound.fade_out(20)
 
-    def create_background_music(self, duration_ms):
-        """Create a low-volume ambient background music layer for the whole video.
-        Use multiple sine waves slightly detuned to make it interesting.
-        """
-        if not self.audio_enabled:
-            return None
-
-        # Create a layered ambient track
-        base = Sine(220).to_audio_segment(duration=duration_ms).apply_gain(-30)
-        layer1 = Sine(330).to_audio_segment(duration=duration_ms).apply_gain(-34)
-        layer2 = Sine(440).to_audio_segment(duration=duration_ms).apply_gain(-36)
-        music = base.overlay(layer1).overlay(layer2)
-
-        # Add a faint noise pad for texture
-        noise = WhiteNoise().to_audio_segment(duration=duration_ms).apply_gain(-42)
-        music = music.overlay(noise)
-        return music
+    # legacy single-tone background function removed; we rely on the randomized
+    # create_background_music below which is seeded per-call for unique tracks
 
     def create_background_music(self, duration_ms=10000):
         """Create a subtle looping background music segment for the full video duration.
@@ -175,12 +181,19 @@ class ShortsVideoGenerator:
         if not self.audio_enabled:
             return None
 
-        # Build a layered pad/chord with low gain
-        base1 = Sine(110).to_audio_segment(duration=duration_ms).apply_gain(-30)
-        base2 = Sine(220).to_audio_segment(duration=duration_ms).apply_gain(-33)
-        base3 = Sine(330).to_audio_segment(duration=duration_ms).apply_gain(-35)
+        # Randomize the base frequencies per-call so each video has a different pad
+        rand = random.Random()
+        # Seed with current time to get different sound each call
+        rand.seed(time.time_ns())
+        root = rand.choice([60, 90, 110, 130, 150, 180])
+        factors = [1, 2, 3]
+        freqs = [root * f for f in factors]
+        # Build a layered pad/chord with low gain; small random gain shifts for variation
+        base1 = Sine(freqs[0]).to_audio_segment(duration=duration_ms).apply_gain(-30 + rand.randint(-2, 2))
+        base2 = Sine(freqs[1]).to_audio_segment(duration=duration_ms).apply_gain(-34 + rand.randint(-2, 2))
+        base3 = Sine(freqs[2]).to_audio_segment(duration=duration_ms).apply_gain(-36 + rand.randint(-2, 2))
         # A faint noise bed
-        noise = WhiteNoise().to_audio_segment(duration=duration_ms).apply_gain(-50)
+        noise = WhiteNoise().to_audio_segment(duration=duration_ms).apply_gain(-50 + rand.randint(-2, 2))
         music = base1.overlay(base2).overlay(base3).overlay(noise)
         # subtle fade in/out
         return music.fade_in(500).fade_out(500)
@@ -366,7 +379,7 @@ class ShortsVideoGenerator:
                     audio_events.append((time_ms, 'key', sample_idx))
                 else:
                     time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'click', None))
+                    audio_events.append((time_ms, 'key', None))
 
         # Hold after question
         for _ in range(15): frames.append(frames[-1])
@@ -484,7 +497,7 @@ class ShortsVideoGenerator:
                         audio_events.append((time_ms, 'key', sample_idx))
                     else:
                         time_ms = int((len(frames) / self.fps) * 1000)
-                        audio_events.append((time_ms, 'click', None))
+                        audio_events.append((time_ms, 'key', None))
             
             # Newline pause
             for _ in range(5): frames.append(frames[-1])
@@ -564,7 +577,7 @@ class ShortsVideoGenerator:
                     audio_events.append((time_ms, 'key', sample_idx))
                 else:
                     time_ms = int((len(frames) / self.fps) * 1000)
-                    audio_events.append((time_ms, 'click', None))
+                    audio_events.append((time_ms, 'key', None))
 
         # Enter sound after command
         if self.audio_enabled:
@@ -670,7 +683,8 @@ class ShortsVideoGenerator:
                             # Soften the key sample so it doesn't overpower the mix
                             sound = sound.apply_gain(-10)
                         else:
-                            sound = click_sound
+                            # Prefer a randomized synth key click to avoid repetition when samples aren't available
+                            sound = self.create_random_key_click() or click_sound
                     else:
                         continue
                 except Exception as e:
