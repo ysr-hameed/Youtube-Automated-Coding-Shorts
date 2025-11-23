@@ -51,6 +51,7 @@ class AutoScheduler:
         existing_future_times = [et for et in existing_times if et > now]
         count = min(count, 7)
         needed = count - len(existing)
+        print(f"📅 Today: {today}, Existing schedules: {len(existing)}, Needed: {needed} at {datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S IST')}")
         if needed <= 0:
             return existing
         
@@ -143,15 +144,16 @@ class AutoScheduler:
             # If scheduled time is already too close to now (shouldn't happen because window_start uses now), skip
             if (scheduled_time - now).total_seconds() < 0:
                 continue
-            # Check if too close to existing future schedules
-            if any(abs((scheduled_time - et).total_seconds()) < min_gap_minutes * 60 for et in existing_future_times):
+            # Skip if already exists
+            if scheduled_time in existing_times:
                 continue
             # Persist schedule in DB
             sid = db.add_schedule(scheduled_time)
             scheduled.append({ 'id': sid, 'scheduled_at': scheduled_time, 'executed': False })
         # Log created schedule times
         for s in scheduled:
-            print(f"🗓️ Scheduled: {s.get('scheduled_at').isoformat()} (id: {s.get('id')})")
+            print(f"🗓️ Scheduled: {s.get('scheduled_at').strftime('%Y-%m-%d %H:%M:%S IST')} (id: {s.get('id')})")
+        print(f"✅ Generated {len(scheduled)} new schedules at {datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S IST')}")
         return existing + scheduled
 
     def start(self):
@@ -160,7 +162,7 @@ class AutoScheduler:
             db_status = db.get_status()
         except Exception:
             db_status = {'connected': False}
-        print(f"🕰️ Scheduler Started (India Time) | DB connected={db_status.get('connected')}")
+        print(f"🕰️ Scheduler Started (India Time) at {datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S IST')} | DB connected={db_status.get('connected')}")
         # On start, ensure today's schedule exists based on env var DAILY_SCHEDULES
         try:
             count = int(os.getenv('DAILY_SCHEDULES', '1'))
@@ -182,7 +184,7 @@ class AutoScheduler:
                 try:
                     if not s.get('executed') and s.get('scheduled_at') <= now:
                         # Run a scheduled job
-                        print(f"⏰ Running scheduled job for {s.get('scheduled_at')}")
+                        print(f"⏰ Running scheduled job for {s.get('scheduled_at').strftime('%Y-%m-%d %H:%M:%S IST')} at {datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S IST')}")
                         # If a scheduled job is older than allowable 'miss' window we skip it to avoid re-running on restart
                         try:
                             allow_missed_seconds = int(os.getenv('SCHEDULE_ALLOW_MISSED_SECONDS', '300'))
@@ -207,9 +209,13 @@ class AutoScheduler:
                         # Use a timeout for generation/upload because jobs can take long
                         timeout_seconds = int(os.getenv('SCHEDULE_TIMEOUT_SECONDS', '600'))
                         def run_job():
+                            current_time = datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S IST')
+                            print(f"🤖 [{current_time}] Starting AI content generation for scheduled job")
                             content = self.content_mgr.generate_content()
                             if not content:
+                                print(f"❌ [{current_time}] AI generation failed - no content")
                                 return {'success': False, 'error': 'AI generation failed'}
+                            print(f"✅ [{current_time}] AI generated content: {content.get('question', 'N/A')[:50]}...")
                             # Ensure content exists in DB
                             entry_id = db.add_history({
                                 'topic': content['topic'],
@@ -219,8 +225,10 @@ class AutoScheduler:
                                 'tags': content.get('tags', [])
                             })
                             content['db_id'] = entry_id
+                            print(f"🎥 [{current_time}] Starting video generation")
                             auto_upload_flag = os.getenv('ENABLE_UPLOAD', 'true').lower() == 'true'
                             result = process_and_upload(content, self.generator, self.youtube_mgr, filename_prefix='scheduled', auto_upload=auto_upload_flag)
+                            print(f"📤 [{current_time}] Video generation/upload result: success={result.get('success')}, uploaded={result.get('uploaded')}, error={result.get('upload_error')}")
                             return result
                         with ThreadPoolExecutor(max_workers=1) as executor:
                             future = executor.submit(run_job)
