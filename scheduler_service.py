@@ -41,9 +41,9 @@ class AutoScheduler:
         existing = db.get_schedule_for_day(today)
         # If we already have schedules for today, decide whether to keep or recreate
         try:
-            force_recreate = os.getenv('DAILY_FORCE_RECREATE', 'true').lower() in ('1', 'true', 'yes')
+            force_recreate = os.getenv('DAILY_FORCE_RECREATE', 'false').lower() in ('1', 'true', 'yes')
         except Exception:
-            force_recreate = True
+            force_recreate = False
 
         if existing:
             # If force_recreate is enabled we delete and recreate exact count.
