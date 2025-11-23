@@ -36,6 +36,14 @@ generator = ShortsVideoGenerator()
 logging.info(f"Audio enabled: {generator.audio_enabled}")
 content_mgr = ContentManager()
 youtube_mgr = YouTubeManager()
+# Start scheduler in production (Render sets RENDER env var)
+if os.getenv('RENDER'):
+    from scheduler_service import AutoScheduler
+    scheduler = AutoScheduler()
+    count = int(os.getenv('DAILY_SCHEDULES', '1'))
+    scheduler._generate_daily_schedule(count)
+    scheduler_thread = threading.Thread(target=scheduler.start, daemon=True)
+    scheduler_thread.start()
 if not generator.audio_enabled:
     logging.info("⚠️ Audio features are disabled. Ensure pydub is installed and ffmpeg is on PATH for full audio functionality.")
 
@@ -307,15 +315,4 @@ def schedule_recompute():
 if __name__ == '__main__':
     # Ensure static folder exists
     os.makedirs('static', exist_ok=True)
-    # Production-friendly default: respect FLASK_DEBUG env variable (default off)
-    debug_mode = os.getenv('FLASK_DEBUG', '0') == '1'
-    # Start scheduler in background thread
-    from scheduler_service import AutoScheduler
-    scheduler = AutoScheduler()
-    # Generate initial schedules synchronously
-    count = int(os.getenv('DAILY_SCHEDULES', '1'))
-    scheduler._generate_daily_schedule(count)
-    import threading
-    scheduler_thread = threading.Thread(target=scheduler.start, daemon=True)
-    scheduler_thread.start()
-    app.run(host='0.0.0.0', port=5000, debug=debug_mode)
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)
