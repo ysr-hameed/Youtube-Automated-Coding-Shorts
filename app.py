@@ -133,16 +133,20 @@ def generate():
 @app.route('/api/ai/generate', methods=['POST'])
 def ai_generate():
     try:
+        print("Starting AI content generation")
         # Generate content using Gemini
         data = request.json or {}
         auto_upload = data.get('auto_upload', True)
         content = content_mgr.generate_content()
+        print(f"AI content generated: {content}")
         
         # Process generation and optional upload through helper
         result = process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', auto_upload=auto_upload)
         if not result.get('success'):
+            print(f"Generation failed: {result.get('error')}")
             return jsonify({"success": False, "error": result.get('error', 'Generation failed')}), 500
         video_path = result.get('video_path')
+        print(f"Video generated at: {video_path}")
 
         # The upload was handled inside process_and_upload; use results
         uploaded = result.get('uploaded', False)
