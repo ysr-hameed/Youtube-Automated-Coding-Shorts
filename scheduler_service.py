@@ -32,24 +32,27 @@ class AutoScheduler:
 
     def _generate_daily_schedule(self, count=1):
         """Create schedule entries for the current day, ensuring at least a 30 minute gap between runs.
-        If schedules already exist for today, don't duplicate them. Return list of schedule dicts.
+        If schedules already exist for today, add more if needed. Return list of schedule dicts.
         """
         if pytz:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Clean up old schedules
+        try:
+            deleted_old = db.delete_schedules_before_day(today)
+            if deleted_old > 0:
+                print(f"🗑️ Deleted {deleted_old} old schedules")
+        except Exception as e:
+            print(f"⚠️ Failed to delete old schedules: {e}")
         existing = db.get_schedule_for_day(today)
-        # Always recreate schedules for today to ensure freshness
-        if existing:
-            try:
-                deleted = db.delete_schedules_for_day(today)
-                print(f"🗑️ Deleted {deleted} existing schedules for today")
-            except Exception as e:
-                print(f"⚠️ Failed to delete existing schedules: {e}")
-        
-        # Create new schedules
-        existing_times = []
+        existing_times = [s['scheduled_at'] for s in existing]
         count = min(count, 7)
+        needed = count - len(existing)
+        if needed <= 0:
+            return existing
+        
+        # Create additional schedules
 
         # window start and end
         # Check for explicit times via env var (comma-separated HH:MM values in IST)
@@ -77,6 +80,9 @@ class AutoScheduler:
                 try:
                     hh, mm = [int(x) for x in t.split(':')]
                     scheduled_time = today + timedelta(hours=hh, minutes=mm)
+                    # Skip if already exists
+                    if scheduled_time in existing_times:
+                        continue
                     # Skip times less than min gap from the last added time
                     if last_added and (scheduled_time - last_added).total_seconds() < min_gap_minutes * 60:
                         logging.warning(f"Explicit schedule {scheduled_time.isoformat()} too close to previous schedule; skipped (min gap {min_gap_minutes}m)")
@@ -88,7 +94,7 @@ class AutoScheduler:
                     continue
             for s in scheduled:
                 print(f"🗓️ Scheduled (explicit): {s.get('scheduled_at').isoformat()} (id: {s.get('id')})")
-            return scheduled
+            return existing + scheduled
 
         # If we're generating schedule during runtime, avoid creating times in the past for today
         now = datetime.now(self.tz) if pytz else datetime.now()
@@ -144,7 +150,7 @@ class AutoScheduler:
         # Log created schedule times
         for s in scheduled:
             print(f"🗓️ Scheduled: {s.get('scheduled_at').isoformat()} (id: {s.get('id')})")
-        return scheduled
+        return existing + scheduled
 
     def start(self):
         # Print DB status and scheduler start info to aid debugging

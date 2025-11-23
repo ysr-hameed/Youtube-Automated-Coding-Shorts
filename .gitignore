@@ -8,6 +8,7 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
+.env
 dist/
 build/
 frames/

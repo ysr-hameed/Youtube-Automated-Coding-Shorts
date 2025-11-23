@@ -425,6 +425,44 @@ class Database:
                 pass
             return before - len(self.mock_schedules)
 
+    def delete_schedules_before_day(self, date):
+        """Delete all schedules before the given day (date is a datetime at midnight in local tz).
+        Returns number of deleted schedules.
+        """
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM schedules WHERE scheduled_at < %s RETURNING id", (date,))
+                try:
+                    rows = cur.fetchall()
+                    return len(rows)
+                except Exception:
+                    return 0
+        else:
+            # Remove from mock_schedules
+            from datetime import datetime
+            before = len(self.mock_schedules)
+            remaining = []
+            for e in self.mock_schedules:
+                d = e.get('scheduled_at')
+                if isinstance(d, str):
+                    try:
+                        d = datetime.fromisoformat(d)
+                    except Exception:
+                        d = None
+                if d and d.date() < date.date():
+                    continue
+                remaining.append(e)
+            self.mock_schedules = remaining
+            # Persist changes
+            try:
+                if self.mock_store_path:
+                    with open(self.mock_store_path, 'w') as _f:
+                        json.dump(self.mock_schedules, _f)
+            except Exception:
+                pass
+            return before - len(self.mock_schedules)
+
     def mark_schedule_executed(self, schedule_id, executed_at=None, result=None):
         conn = self.get_conn()
         if conn:
