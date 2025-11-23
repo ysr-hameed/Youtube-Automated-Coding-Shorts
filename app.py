@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, redirect
 import logging
 from flask_cors import CORS
 import warnings
 # Suppress noisy SyntaxWarning emitted from pydub internals in production
 # This prevents messages like "invalid escape sequence '\('" from appearing in logs.
 warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"pydub\..*")
+from google_auth_oauthlib.flow import Flow
 from video_generator import ShortsVideoGenerator
 from content_manager import ContentManager
 from youtube_manager import YouTubeManager
@@ -159,9 +160,38 @@ def download(filename):
 def auth_youtube():
     try:
         success = youtube_mgr.authenticate()
+        if isinstance(success, str):
+            return jsonify({"success": False, "auth_url": success})
         return jsonify({"success": success})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/auth/youtube/callback')
+def auth_callback():
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        if not code or not state:
+            return "Missing code or state", 400
+        
+        saved_state = db.get_config('oauth_state')
+        if state != saved_state:
+            return "Invalid state", 400
+        
+        client_config = youtube_mgr._get_client_secrets()
+        if not client_config:
+            return "No client config", 500
+        
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
+        flow = Flow.from_client_config(client_config, scopes=youtube_mgr.SCOPES, redirect_uri=redirect_uri)
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        youtube_mgr._save_credentials(creds)
+        youtube_mgr.youtube = build(youtube_mgr.api_service_name, youtube_mgr.api_version, credentials=creds)
+        return redirect('/')
+    except Exception as e:
+        return f"Authentication failed: {str(e)}", 500
 
 
 @app.route('/api/auth/status', methods=['GET'])

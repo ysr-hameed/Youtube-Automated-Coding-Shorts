@@ -70,10 +70,14 @@ async function authYouTube() {
     const res = await fetch('/api/auth/youtube', { method: 'POST' });
     const data = await res.json();
     if (data.success) {
-    alert("YouTube Authenticated! ✅");
-    refreshAuthStatus();
+        alert("YouTube Authenticated! ✅");
+        refreshAuthStatus();
     } else {
-        alert("Auth Failed. " + (data.error || "Check client_secrets.json"));
+        if (data.auth_url) {
+            window.location.href = data.auth_url;
+        } else {
+            alert("Auth Failed. " + (data.error || "Check client_secrets.json"));
+        }
     }
 }
 
