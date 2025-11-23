@@ -279,8 +279,8 @@ def cron_generate():
 def schedule_today():
     try:
         from datetime import datetime
-        tz = pytz.timezone('Asia/Kolkata')
-        today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        tz_utc = pytz.timezone('UTC')
+        today = datetime.now(tz_utc).replace(hour=0, minute=0, second=0, microsecond=0)
         schedules = db.get_schedule_for_day(today)
         # Convert datetime to ISO strings when present
         def serialize(s):

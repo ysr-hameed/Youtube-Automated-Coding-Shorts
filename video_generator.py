@@ -34,7 +34,7 @@ class CodeExecutor:
         try:
             # Run node with a timeout
             result = subprocess.run(
-                ['node', temp_path],
+                ['nodejs', temp_path],
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -607,7 +607,7 @@ class ShortsVideoGenerator:
             append_frame(img, 1)
 
         # Type Command
-        command = "node index.js"
+        command = "nodejs index.js"
         curr_cmd = "$ "
         for char in command:
             img = base_term_img.copy()
