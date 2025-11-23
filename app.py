@@ -154,7 +154,7 @@ def ai_generate():
 
 @app.route('/api/download/<filename>')
 def download(filename):
-    return send_file(os.path.join("output", filename), as_attachment=True)
+    return send_file(os.path.join("output", filename), as_attachment=False)
 
 @app.route('/api/auth/youtube', methods=['POST'])
 def auth_youtube():
@@ -308,4 +308,13 @@ if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     # Production-friendly default: respect FLASK_DEBUG env variable (default off)
     debug_mode = os.getenv('FLASK_DEBUG', '0') == '1'
+    # Start scheduler in background thread
+    from scheduler_service import AutoScheduler
+    scheduler = AutoScheduler()
+    # Generate initial schedules synchronously
+    count = int(os.getenv('DAILY_SCHEDULES', '1'))
+    scheduler._generate_daily_schedule(count)
+    import threading
+    scheduler_thread = threading.Thread(target=scheduler.start, daemon=True)
+    scheduler_thread.start()
     app.run(host='0.0.0.0', port=5000, debug=debug_mode)
