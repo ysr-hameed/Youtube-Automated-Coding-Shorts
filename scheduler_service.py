@@ -45,19 +45,8 @@ class AutoScheduler:
         except Exception:
             force_recreate = True
 
-        if existing and len(existing) >= count:
-            # If count matches, return existing. If existing > count and force_recreate is true,
-            # delete and recreate so the number of schedules exactly matches DAILY_SCHEDULES.
-            if len(existing) == count and not force_recreate:
-                try:
-                    print(f"🗓️ Existing schedules for today ({len(existing)}):")
-                    for s in existing:
-                        sa = s.get('scheduled_at')
-                        print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
-                except Exception:
-                    pass
-                return existing
-
+        if existing:
+            # If force_recreate is enabled we delete and recreate exact count.
             if force_recreate:
                 try:
                     deleted = db.delete_schedules_for_day(today)
@@ -66,14 +55,28 @@ class AutoScheduler:
                     print(f"⚠️ Failed to delete existing schedules: {e}")
                 existing = []
             else:
-                try:
-                    print(f"🗓️ Existing schedules for today ({len(existing)}):")
-                    for s in existing:
-                        sa = s.get('scheduled_at')
-                        print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
-                except Exception:
-                    pass
-                return existing
+                # If we already have >= count schedules, just return them
+                if len(existing) >= count:
+                    try:
+                        print(f"🗓️ Existing schedules for today ({len(existing)}):")
+                        for s in existing:
+                            sa = s.get('scheduled_at')
+                            print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
+                    except Exception:
+                        pass
+                    return existing
+                # Otherwise we will create only the missing number of schedules
+                needed = max(0, count - len(existing))
+                print(f"�️ Found {len(existing)} existing schedules, will create {needed} more to reach {count} slots")
+                # Build a list of existing datetimes to respect min_gap when adding new ones
+                existing_times = []
+                for s in existing:
+                    try:
+                        existing_times.append(s.get('scheduled_at'))
+                    except Exception:
+                        continue
+        else:
+            existing_times = []
 
         # window start and end
         # Check for explicit times via env var (comma-separated HH:MM values in IST)
@@ -148,7 +151,8 @@ class AutoScheduler:
         rand = random.Random()
         rand.seed(time.time_ns())
         scheduled = []
-        for i in range(count):
+        loop_count = needed if 'needed' in locals() else count
+        for i in range(loop_count):
             seg_start_min = i * segment
             seg_end_min = seg_start_min + segment - 1
             if seg_end_min <= seg_start_min:
@@ -157,6 +161,9 @@ class AutoScheduler:
             scheduled_time = window_start + timedelta(minutes=offset_min)
             # If scheduled time is already too close to now (shouldn't happen because window_start uses now), skip
             if (scheduled_time - now).total_seconds() < 0:
+                continue
+            # Check if too close to existing schedules
+            if any(abs((scheduled_time - et).total_seconds()) < min_gap_minutes * 60 for et in existing_times):
                 continue
             # Persist schedule in DB
             sid = db.add_schedule(scheduled_time)

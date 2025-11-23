@@ -661,34 +661,51 @@ class ShortsVideoGenerator:
         if self.audio_enabled:
             final_audio = AudioSegment.silent(duration=total_duration)
             bg_file = self._find_background_file() if hasattr(self, '_find_background_file') else None
+            # decide where background should start: after TTS if present, else at 0
+            try:
+                bg_start_ms = int(tts_duration_ms) if tts_path else 0
+            except Exception:
+                bg_start_ms = 0
+
             if bg_file and os.path.exists(bg_file):
                 try:
                     bg = AudioSegment.from_file(bg_file)
-                    # Loop background if it's shorter than total duration
-                    if len(bg) < total_duration:
-                        times = (int(total_duration) // len(bg)) + 1
-                        bg = bg * times
-                    bg = bg[:int(total_duration)]
-                    bg = bg.apply_gain(-18)
-                    final_audio = final_audio.overlay(bg)
+                    # Loop background if it's shorter than remaining duration after start
+                    remaining = int(total_duration) - bg_start_ms
+                    if remaining <= 0:
+                        # nothing to add
+                        bg = None
+                    else:
+                        if len(bg) < remaining:
+                            times = (int(remaining) // len(bg)) + 1
+                            bg = bg * times
+                        bg = bg[:int(remaining)]
+                        # Apply default background gain and overlay at bg_start_ms
+                        bg = bg.apply_gain(int(os.getenv('BG_MUSIC_GAIN_DB', '-12')))
+                        final_audio = final_audio.overlay(bg, position=bg_start_ms)
                 except Exception as e:
                     logging.warning(f"Failed to load custom background {bg_file}: {e}")
                     # Fallback to synthesized music
-                    bg_music = self.create_background_music(total_duration)
+                    bg_music = self.create_background_music(max(0, int(total_duration - bg_start_ms)))
                     if bg_music is not None:
-                        final_audio = final_audio.overlay(bg_music)
+                        bg_music = bg_music.apply_gain(int(os.getenv('BG_MUSIC_GAIN_DB', '-12')))
+                        final_audio = final_audio.overlay(bg_music, position=bg_start_ms)
             else:
-                bg_music = self.create_background_music(total_duration)
+                bg_music = self.create_background_music(max(0, int(total_duration - bg_start_ms)))
                 if bg_music is not None:
-                    final_audio = final_audio.overlay(bg_music)
+                    bg_music = bg_music.apply_gain(int(os.getenv('BG_MUSIC_GAIN_DB', '-12')))
+                    final_audio = final_audio.overlay(bg_music, position=bg_start_ms)
         else:
             final_audio = None
         
         click_sound = self.create_mechanical_click()
-        # Make clicks a bit softer so background music sits under them; keep mechanical clicks as preferred fallback
+        # Make clicks a bit softer or louder based on env setting so background music sits under them; keep mechanical clicks as preferred fallback
+        try:
+            click_gain_db = int(os.getenv('KEY_CLICK_GAIN_DB', '-3'))
+        except Exception:
+            click_gain_db = -3
         if click_sound is not None:
-            # Slightly reduce mechanical click - small attenuation so it's audible but not overpowering
-            click_sound = click_sound.apply_gain(-6)
+            click_sound = click_sound.apply_gain(click_gain_db)
         # Prefer an enter sample file if present, otherwise use synthesized enter sound
         enter_sample = None
         enter_file = self._find_enter_sample() if hasattr(self, '_find_enter_sample') else None
@@ -727,8 +744,13 @@ class ShortsVideoGenerator:
                             sample_path = self.key_samples[data]
                             try:
                                 sound = AudioSegment.from_file(sample_path)
-                                # Soften and slightly randomize the key sample (gain and speed) to avoid identical clicks
-                                sound = sound.apply_gain(-12 + random.randint(-2, 1))
+                                # Apply configurable gain to key samples and a small random jitter so repeated keys don't sound identical
+                                try:
+                                    base_gain = int(os.getenv('KEY_SAMPLE_GAIN_DB', '-3'))
+                                except Exception:
+                                    base_gain = -6
+                                jitter = random.randint(-2, 2)
+                                sound = sound.apply_gain(base_gain + jitter)
                                 try:
                                     from pydub import effects
                                     # Allow configurable % variation for key sample speed. Default 0% (no change).
