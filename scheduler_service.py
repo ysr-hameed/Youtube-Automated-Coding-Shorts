@@ -54,6 +54,7 @@ class AutoScheduler:
                 except Exception as e:
                     print(f"⚠️ Failed to delete existing schedules: {e}")
                 existing = []
+                existing_times = []
             else:
                 # If we already have >= count schedules, just return them
                 if len(existing) >= count:

@@ -103,6 +103,22 @@ async function refreshAuthStatus() {
     }
 }
 
+async function resetSchedule() {
+    if (!confirm('Are you sure you want to reset today\'s schedule? This will delete all current schedules and create new ones.')) return;
+    try {
+        const res = await fetch('/api/schedule/reset', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            alert('Schedule reset successfully!');
+            refreshSchedule();
+        } else {
+            alert('Failed to reset schedule: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error resetting schedule');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     refreshAuthStatus();
     // Set cron URL to absolute path for easy copying

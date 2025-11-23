@@ -133,12 +133,10 @@ def generate():
 @app.route('/api/ai/generate', methods=['POST'])
 def ai_generate():
     try:
-        print("Starting AI content generation")
         # Generate content using Gemini
         data = request.json or {}
         auto_upload = data.get('auto_upload', True)
         content = content_mgr.generate_content()
-        print(f"AI content generated: {content}")
         
         # Process generation and optional upload through helper
         result = process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', auto_upload=auto_upload)
@@ -313,6 +311,27 @@ def schedule_recompute():
                 'executed': s.get('executed')
             })
         return jsonify({'success': True, 'schedules': res})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/schedule/reset', methods=['POST'])
+def reset_schedule():
+    try:
+        from datetime import datetime
+        tz_utc = pytz.timezone('UTC')
+        today = datetime.now(tz_utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Delete all schedules for today
+        conn = db.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM schedules WHERE date_trunc('day', scheduled_at) = date_trunc('day', %s)", (today,))
+            conn.commit()
+        # Regenerate schedules
+        from scheduler_service import AutoScheduler
+        scheduler = AutoScheduler()
+        count = int(os.getenv('DAILY_SCHEDULES', '7'))
+        scheduler._generate_daily_schedule(count)
+        return jsonify({"success": True, "message": f"Reset and generated {count} schedules for today"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
