@@ -47,6 +47,7 @@ class AutoScheduler:
             print(f"⚠️ Failed to delete old schedules: {e}")
         existing = db.get_schedule_for_day(today)
         existing_times = [s['scheduled_at'] for s in existing]
+        existing_future_times = [et for et in existing_times if et > now]
         count = min(count, 7)
         needed = count - len(existing)
         if needed <= 0:
@@ -141,8 +142,8 @@ class AutoScheduler:
             # If scheduled time is already too close to now (shouldn't happen because window_start uses now), skip
             if (scheduled_time - now).total_seconds() < 0:
                 continue
-            # Check if too close to existing schedules
-            if any(abs((scheduled_time - et).total_seconds()) < min_gap_minutes * 60 for et in existing_times):
+            # Check if too close to existing future schedules
+            if any(abs((scheduled_time - et).total_seconds()) < min_gap_minutes * 60 for et in existing_future_times):
                 continue
             # Persist schedule in DB
             sid = db.add_schedule(scheduled_time)

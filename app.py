@@ -276,10 +276,13 @@ def cron_generate():
 @app.route('/api/schedule/today', methods=['GET'])
 def schedule_today():
     try:
-        from datetime import datetime
-        tz_utc = pytz.timezone('UTC')
-        today = datetime.now(tz_utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        import pytz
+        tz = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(tz)
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         schedules = db.get_schedule_for_day(today)
+        # Filter to only upcoming schedules
+        upcoming = [s for s in schedules if s.get('scheduled_at') and s['scheduled_at'] > now]
         # Convert datetime to ISO strings when present
         def serialize(s):
             return {
@@ -289,7 +292,7 @@ def schedule_today():
                 'executed_at': s.get('executed_at').isoformat() if s.get('executed_at') else None,
                 'result': s.get('result')
             }
-        return jsonify({'success': True, 'schedules': [serialize(s) for s in (schedules or [])]})
+        return jsonify({'success': True, 'schedules': [serialize(s) for s in (upcoming or [])]})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
