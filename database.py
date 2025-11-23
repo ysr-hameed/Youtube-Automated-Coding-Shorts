@@ -104,6 +104,9 @@ class Database:
                 logging.info('⚠️ Database unavailable at startup; falling back to mock storage')
 
     def get_conn(self):
+        # Force use mock DB if configured
+        if os.getenv('USE_MOCK_DB', 'false').lower() in ('true', '1', 'yes'):
+            return None
         # If we don't have a DB url configured, skip attempts
         if not getattr(self, 'db_url', None):
             return None
