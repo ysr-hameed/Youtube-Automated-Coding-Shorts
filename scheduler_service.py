@@ -49,6 +49,7 @@ class AutoScheduler:
         
         # Create new schedules
         existing_times = []
+        count = min(count, 7)
 
         # window start and end
         # Check for explicit times via env var (comma-separated HH:MM values in IST)

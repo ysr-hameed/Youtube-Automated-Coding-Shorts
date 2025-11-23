@@ -342,7 +342,7 @@ class ShortsVideoGenerator:
         font_header = self.get_font(40)
         font_terminal = self.get_font(42)
         
-        margin_x = 32
+        margin_x = 50
         header_y = 100
         question_y = 200
         code_y = 380 # Start code lower to give space for question
@@ -388,7 +388,7 @@ class ShortsVideoGenerator:
         img_tmp, draw_tmp = create_bg()
         q_line_h = draw_tmp.textbbox((0,0), "Ay", font=font_question)[3] - draw_tmp.textbbox((0,0), "Ay", font=font_question)[1]
         question_height_px = q_line_h * max(1, len(wrapped_question)) + 20
-        code_y = question_y + question_height_px + 40
+        code_y = question_y + question_height_px + 60
 
         for char in flat_question:
             img, draw = create_bg()
