@@ -546,8 +546,9 @@ class ShortsVideoGenerator:
                             audio_events.append((time_ms, 'key', None))
                         last_key_event_ms = time_ms
             
-            # Newline pause
-            for _ in range(5): frames.append(frames[-1])
+            # Newline pause - repeat the last written frame a few times
+            if last_frame_img is not None:
+                append_frame(last_frame_img, 5)
 
     # No enter/keyboard sounds: omit enter sound
         

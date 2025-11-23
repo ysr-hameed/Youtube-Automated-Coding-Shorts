@@ -1,6 +1,10 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import logging
 from flask_cors import CORS
+import warnings
+# Suppress noisy SyntaxWarning emitted from pydub internals in production
+# This prevents messages like "invalid escape sequence '\('" from appearing in logs.
+warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"pydub\..*")
 from video_generator import ShortsVideoGenerator
 from content_manager import ContentManager
 from youtube_manager import YouTubeManager
