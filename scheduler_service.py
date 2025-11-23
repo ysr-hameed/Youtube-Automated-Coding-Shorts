@@ -37,7 +37,7 @@ class AutoScheduler:
         if pytz:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         else:
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         existing = db.get_schedule_for_day(today)
         # If we already have schedules for today, decide whether to keep or recreate
         try:
@@ -138,9 +138,9 @@ class AutoScheduler:
         total_minutes = int((window_end - window_start).total_seconds() // 60)
         # Determine minimum gap minutes and ensure count is valid
         try:
-            min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '30'))
+            min_gap_minutes = int(os.getenv('DAILY_MIN_GAP_MINUTES', '90'))
         except Exception:
-            min_gap_minutes = 30
+            min_gap_minutes = 90
         if count <= 0:
             count = 1
         # Ensure minimum gap

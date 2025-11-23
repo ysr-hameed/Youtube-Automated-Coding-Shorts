@@ -88,12 +88,15 @@ class ShortsVideoGenerator:
         
         # Check audio capabilities
         self.ffmpeg_available = shutil.which('ffmpeg') is not None
+        print(f"PYDUB_AVAILABLE: {PYDUB_AVAILABLE}")
+        print(f"ffmpeg_available: {self.ffmpeg_available}")
         if not PYDUB_AVAILABLE:
-            logging.info("pydub not installed. Audio features will be disabled.")
+            print("pydub not installed. Audio features will be disabled.")
         if not self.ffmpeg_available:
-            logging.info("ffmpeg not found in PATH. Audio features will be disabled.")
+            print("ffmpeg not found in PATH. Audio features will be disabled.")
 
         self.audio_enabled = PYDUB_AVAILABLE and self.ffmpeg_available
+        print(f"audio_enabled: {self.audio_enabled}")
         # Now load key samples (method exists below)
         try:
             self.key_samples = self._load_key_samples()
@@ -797,15 +800,18 @@ class ShortsVideoGenerator:
         final_output = os.path.join(self.output_dir, f"{filename}.mp4")
         if self.ffmpeg_available and temp_audio:
             try:
+                print("Starting ffmpeg merge")
                 subprocess.run([
                     'ffmpeg', '-y', '-i', temp_video, '-i', temp_audio,
                     '-c:v', 'copy', '-c:a', 'aac', final_output
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                print("ffmpeg merge successful")
             except Exception as e:
-                logging.warning(f"ffmpeg merge failed, saving video without audio: {e}")
+                print(f"ffmpeg merge failed, saving video without audio: {e}")
                 # If ffmpeg merge fails, simply copy temp_video to final output
                 os.replace(temp_video, final_output)
         else:
+            print(f"No audio merge: ffmpeg_available={self.ffmpeg_available}, temp_audio={temp_audio is not None}")
             # If no ffmpeg or audio, just move/copy the video file as final output
             os.replace(temp_video, final_output)
         
