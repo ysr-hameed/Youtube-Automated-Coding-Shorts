@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>App Health</title>
+    <style>
+      body { font-family: Inter, Roboto, Arial, sans-serif; background:#f6f8fa; color:#0b1220; padding:24px }
+      .card { background: #fff; border-radius:8px; padding:18px; box-shadow: 0 6px 18px rgba(12,20,30,0.06); max-width:820px }
+      pre { background:#0f1724; color:#e6eef8; padding:12px; border-radius:6px; overflow:auto }
+      .ok { color: #107c10; font-weight:700 }
+      .bad { color: #c50f1f; font-weight:700 }
+      .small { color: #6b7280 }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Application Health</h1>
+      <p class="small">This page checks the app status and displays a quick diagnostic. It polls <code>/api/health</code>.</p>
+      <div id="status">Checking…</div>
+      <h3>Raw /api/health response</h3>
+      <pre id="raw">(waiting)</pre>
+      <p class="small">If the page shows <span class="ok">OK</span>, the app is up. If <span class="bad">DOWN</span>, check logs.</p>
+    </div>
+
+    <script>
+      async function refresh(){
+        const statusEl = document.getElementById('status');
+        const rawEl = document.getElementById('raw');
+        try{
+          const r = await fetch('/api/health');
+          const j = await r.json();
+          rawEl.textContent = JSON.stringify(j, null, 2);
+          if(r.ok && j && j.ok){
+            statusEl.innerHTML = '<span class="ok">OK</span> — audio_enabled: ' + (j.audio_enabled? 'yes':'no');
+          } else {
+            statusEl.innerHTML = '<span class="bad">DOWN</span>';
+          }
+        }catch(e){
+          rawEl.textContent = String(e);
+          statusEl.innerHTML = '<span class="bad">DOWN</span>';
+        }
+      }
+      refresh();
+      setInterval(refresh, 15000);
+    </script>
+  </body>
+</html>

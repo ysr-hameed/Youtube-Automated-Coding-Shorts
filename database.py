@@ -279,24 +279,44 @@ class Database:
         conn = self.get_conn()
         if conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO content_history (topic, question, code, title, tags, uploaded, youtube_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
-                    content['topic'],
-                    content['question'],
-                    content['code'],
-                    content.get('title'),
-                    content.get('tags', []),
-                    content.get('uploaded', False),
-                    content.get('youtube_id', None)
-                ))
+                # Try to include language if table supports it
                 try:
+                    cur.execute("""
+                        INSERT INTO content_history (topic, question, code, title, tags, uploaded, youtube_id, language)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        content['topic'],
+                        content['question'],
+                        content['code'],
+                        content.get('title'),
+                        content.get('tags', []),
+                        content.get('uploaded', False),
+                        content.get('youtube_id', None),
+                        content.get('language', None)
+                    ))
                     new_id = cur.fetchone()[0]
+                    return new_id
                 except Exception:
-                    new_id = None
-                return new_id
+                    # Fallback for older schema without language column
+                    cur.execute("""
+                        INSERT INTO content_history (topic, question, code, title, tags, uploaded, youtube_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        content['topic'],
+                        content['question'],
+                        content['code'],
+                        content.get('title'),
+                        content.get('tags', []),
+                        content.get('uploaded', False),
+                        content.get('youtube_id', None)
+                    ))
+                    try:
+                        new_id = cur.fetchone()[0]
+                    except Exception:
+                        new_id = None
+                    return new_id
         else:
             # Append content to mock history and return a generated id
             entry = content.copy()
@@ -304,6 +324,8 @@ class Database:
             entry['id'] = entry_id
             entry.setdefault('uploaded', False)
             entry.setdefault('youtube_id', None)
+            # Ensure language key exists for mock entries
+            entry.setdefault('language', content.get('language'))
             self.mock_history.append(entry)
             return entry_id
 
@@ -481,15 +503,49 @@ class Database:
                     return True
             return False
 
-    def get_recent_topics(self, limit=50):
+    def get_recent_topics(self, limit=50, language=None):
+        """Return recent topics. If language is provided, filter by language when possible."""
         conn = self.get_conn()
         if conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT topic FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
-                return [row[0] for row in cur.fetchall()]
+                if language:
+                    try:
+                        cur.execute("SELECT topic FROM content_history WHERE language = %s ORDER BY created_at DESC LIMIT %s", (language, limit))
+                        return [row[0] for row in cur.fetchall()]
+                    except Exception:
+                        # If schema doesn't have language column, fall back to unfiltered
+                        cur.execute("SELECT topic FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
+                        return [row[0] for row in cur.fetchall()]
+                else:
+                    cur.execute("SELECT topic FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
+                    return [row[0] for row in cur.fetchall()]
         else:
-            # Return most recent topics from mock history
-            return [c['topic'] for c in self.mock_history[-limit:][::-1]]
+            # Return most recent topics from mock history; filter by language if provided
+            entries = self.mock_history[-limit:][::-1]
+            if language:
+                return [c['topic'] for c in entries if c.get('language') == language]
+            return [c['topic'] for c in entries]
+
+    def get_recent_history(self, limit=50, language=None):
+        """Return recent history entries as dicts: {'topic','code','language'}."""
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                if language:
+                    try:
+                        cur.execute("SELECT topic, code, language FROM content_history WHERE language = %s ORDER BY created_at DESC LIMIT %s", (language, limit))
+                        return [{'topic': r[0], 'code': r[1], 'language': r[2]} for r in cur.fetchall()]
+                    except Exception:
+                        cur.execute("SELECT topic, code, language FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
+                        return [{'topic': r[0], 'code': r[1], 'language': r[2] if len(r) > 2 else None} for r in cur.fetchall()]
+                else:
+                    cur.execute("SELECT topic, code, language FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
+                    return [{'topic': r[0], 'code': r[1], 'language': r[2] if len(r) > 2 else None} for r in cur.fetchall()]
+        else:
+            entries = self.mock_history[-limit:][::-1]
+            if language:
+                return [{'topic': c.get('topic'), 'code': c.get('code'), 'language': c.get('language')} for c in entries if c.get('language') == language]
+            return [{'topic': c.get('topic'), 'code': c.get('code'), 'language': c.get('language')} for c in entries]
 
     def get_today_upload_count(self):
         conn = self.get_conn()

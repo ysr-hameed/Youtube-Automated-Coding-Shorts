@@ -1,18 +1,19 @@
 import os
 import json
 import difflib
+import random
 import google.generativeai as genai
 from database import db
+
 
 class ContentManager:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
-        
-        self.languages = ['JavaScript', 'Python', 'Go', 'Java']
-        self.lang_idx = 0
+        self.languages = ["JavaScript", "Python", "Go", "Java"]
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            # model wrapper
+            self.model = genai.GenerativeModel("gemini-2.5-flash")
         else:
             print("⚠️ GEMINI_API_KEY not found. AI features will use mock data.")
             self.model = None
@@ -21,114 +22,174 @@ class ContentManager:
         """Generate a unique coding question and code using Gemini.
         Returns a content dict on success or None on failure.
         """
-        past_topics = db.get_recent_topics(limit=100)
-        # Use the current language in the prompt
-        lang = self.languages[self.lang_idx % len(self.languages)]
-        prompt = f"""
-        Generate a unique, viral coding interview question for a YouTube Short.
-        Target audience: Beginner to Intermediate programmers.
-        Language: {lang}.
-        
-        Context (DO NOT USE THESE TOPICS):
-        {', '.join(past_topics)}
-        
-    Requirements:
-        1. Code must be short (max 10 lines) and visually clean.
-        2. Question must be engaging (e.g., "Can you fix this?", "What's the output?").
-    2b. Question must be a short hook (no more than 12 words).
-        3. Title MUST include 2-3 viral hashtags like #shorts #coding #javascript.
-        4. Description must be SEO friendly with keywords.
-        
-        Return ONLY a JSON object:
-        {{
-            "topic": "Short topic name",
-            "question": "The actual question text",
-            "code": "The solution code",
-            "title": "Viral Title with #hashtags",
-            "description": "SEO Description",
-            "tags": ["tag1", "tag2", "tag3"]
-        }}
-        """
-        
+        lang_map = {
+            "JavaScript": "javascript",
+            "Python": "python",
+            "Go": "go",
+            "Java": "java",
+        }
+
+        # Pick an initial language at random
+        lang = random.choice(self.languages)
+        lang_id = lang_map.get(lang, lang.lower())
+
+        # Helper to build the prompt for a given language and recent context
+        def build_prompt(language, past_topics, recent_snippets):
+            """Construct a strict JSON-only prompt that instructs the model to return a single
+            JSON object (no prose, no markdown, no surrounding backticks) matching the schema.
+            """
+            recent_block = "\n".join(recent_snippets) if recent_snippets else "(none)"
+            topics_block = ", ".join(past_topics) if past_topics else "(none)"
+
+            # JSON schema and example to reduce hallucinations and incomplete responses
+            schema = {
+                "type": "object",
+                "required": ["topic", "question", "code", "output", "title", "description", "tags"],
+                "properties": {
+                    "topic": {"type": "string", "description": "Short topic title (3-6 words)"},
+                    "question": {"type": "string", "description": "Hook question <= 12 words"},
+                    "code": {"type": "string", "description": "Code snippet, max 10 lines"},
+                    "output": {"type": "string", "description": "Expected program output (max 5 lines)"},
+                    "title": {"type": "string", "description": "YouTube title with 2-3 hashtags"},
+                    "description": {"type": "string", "description": "SEO-friendly description"},
+                    "tags": {"type": "array", "items": {"type": "string"}}
+                }
+            }
+
+            example = {
+                "topic": "Array Sum (reduce)",
+                "question": "Can you sum an array with reduce()?",
+                "code": "const nums = [1,2,3,4];\nconst sum = nums.reduce((a,b)=>a+b,0);\nconsole.log(sum);",
+                "output": "10",
+                "title": "Sum an Array in One Line! #shorts #javascript",
+                "description": "Quick example showing how to use Array.prototype.reduce to sum numbers. #shorts #javascript #coding",
+                "tags": ["javascript","shorts","coding"]
+            }
+
+            prompt_lines = [
+                "You are an assistant that MUST return exactly one JSON object and nothing else.",
+                "Do NOT include any markdown, commentary, explanation, or surrounding backticks.",
+                f"Target audience: Beginner to Intermediate programmers. Language: {language}.",
+                "Do NOT reuse or repeat topics found in the 'Recent videos' list below. Avoid duplicates.",
+                "Code rules: max 10 non-empty lines, keep it concise and display-friendly.",
+                "Question rules: A short engaging hook <= 12 words (examples: \"What's the output?\", \"Can you fix this?\").",
+                "Output rules: Provide the exact expected stdout output when the snippet is run, max 5 lines.",
+                "Title rules: Include 2-3 viral hashtags (e.g., #shorts #coding #javascript).",
+                "Return schema: Use the following JSON schema and follow the example exactly."
+            ]
+
+            prompt = "\n".join(prompt_lines) + "\n\n"
+            prompt += "RECENT VIDEOS (do not reuse these topics):\n" + recent_block + "\n\n"
+            prompt += "RECENT TOPICS (avoid):\n" + topics_block + "\n\n"
+            prompt += "JSON_SCHEMA:\n" + json.dumps(schema, indent=2) + "\n\n"
+            prompt += "EXAMPLE_RESPONSE (must follow exactly):\n" + json.dumps(example, indent=2) + "\n\n"
+            prompt += "Return only the JSON object now. If you cannot produce a valid object, return an empty JSON object {}."
+            return prompt
+
+        # Gather per-language context from DB (graceful if schema doesn't support language)
+        try:
+            past_topics = db.get_recent_topics(limit=100, language=lang_id) or []
+        except Exception:
+            past_topics = db.get_recent_topics(limit=100) or []
+
+        try:
+            recent_history = db.get_recent_history(limit=10, language=lang_id) or []
+        except Exception:
+            recent_history = []
+
+        recent_snippets = []
+        for h in recent_history[:5]:
+            code_snip = h.get("code", "")
+            first_line = next((l for l in code_snip.splitlines() if l.strip()), "")
+            if len(first_line) > 120:
+                first_line = first_line[:117] + "..."
+            recent_snippets.append(f"{h.get('topic')} -> {first_line}")
+
+        prompt = build_prompt(lang, past_topics, recent_snippets)
+
+        # If no model configured, do NOT use mock content in production: return None
         if not self.model:
-            # No AI model configured – do not auto-generate in scheduled mode
-            print("⚠️ No AI model configured. Skipping AI generation.")
+            print("⚠️ No AI model configured. Skipping AI generation (no mock).")
             return None
 
-        for attempt in range(max_attempts):
+        for attempt in range(1, max_attempts + 1):
             try:
-                response = self.model.generate_content(prompt)
-                text = response.text.strip()
-                if text.startswith('```json'):
-                    text = text.replace('```json', '').replace('```', '')
+                resp = self.model.generate_content(prompt)
+                text = getattr(resp, "text", "") or str(resp)
+                text = text.strip()
+                if text.startswith("```json"):
+                    text = text.replace("```json", "").replace("```", "").strip()
+
                 content = json.loads(text)
 
-                # Validate content fields
-                if not content.get('topic') or not content.get('code') or not content.get('question'):
-                    print("AI returned incomplete content. Trying again...")
+                # basic validation
+                if not content.get("topic") or not content.get("code") or not content.get("question") or not content.get("output"):
+                    print(f"AI returned incomplete content (attempt {attempt}). Retrying...")
                     continue
 
-                # Ensure the question is short and hook-like (<= 12 words)
-                q_words = len(content['question'].split())
+                # enforce short hook requirement
+                q_words = len(content["question"].split())
                 if q_words > 12:
-                    print(f"AI returned long question ({q_words} words). Trying again...")
+                    print(f"AI returned long question ({q_words} words) on attempt {attempt}. Retrying...")
                     continue
 
-                # Avoid obvious duplicate topics using simple matching
-                topic_lower = content['topic'].strip().lower()
+                # duplicate detection against recent topics
+                topic_lower = content["topic"].strip().lower()
                 duplicate = False
                 for t in past_topics:
                     if not t:
                         continue
-                    if t.strip().lower() == topic_lower:
+                    t_lower = t.strip().lower()
+                    if t_lower == topic_lower:
                         duplicate = True
                         break
-                    # fuzzy similarity
-                    ratio = difflib.SequenceMatcher(None, t.strip().lower(), topic_lower).ratio()
+                    ratio = difflib.SequenceMatcher(None, t_lower, topic_lower).ratio()
                     if ratio > 0.85:
                         duplicate = True
                         break
+
                 if duplicate:
-                    print(f"Duplicate or similar topic found (attempt {attempt+1}). Trying again...")
-                    # cycle language if we've tried multiple attempts
-                    self.lang_idx = (self.lang_idx + 1) % len(self.languages)
-                    lang = self.languages[self.lang_idx % len(self.languages)]
-                    # rebuild prompt for new language
-                    prompt = f"""
-        Generate a unique, viral coding interview question for a YouTube Short.
-        Target audience: Beginner to Intermediate programmers.
-        Language: {lang}.
-        
-        Context (DO NOT USE THESE TOPICS):
-        {', '.join(past_topics)}
-        
-        Requirements:
-        1. Code must be short (max 10 lines) and visually clean.
-        2. Question must be engaging (e.g., "Can you fix this?", "What's the output?").
-        3. Title MUST include 2-3 viral hashtags like #shorts #coding #javascript.
-        4. Description must be SEO friendly with keywords.
-        
-        Return ONLY a JSON object:
-        {{
-            "topic": "Short topic name",
-            "question": "The actual question text",
-            "code": "The solution code",
-            "title": "Viral Title with #hashtags",
-            "description": "SEO Description",
-            "tags": ["tag1", "tag2", "tag3"]
-        }}
-        """
+                    print(f"Duplicate or very similar topic detected on attempt {attempt}. Trying a different language.")
+                    # switch language and rebuild context/prompt
+                    other_langs = [l for l in self.languages if l != lang]
+                    if not other_langs:
+                        continue
+                    lang = random.choice(other_langs)
+                    lang_id = lang_map.get(lang, lang.lower())
+                    try:
+                        past_topics = db.get_recent_topics(limit=100, language=lang_id) or []
+                    except Exception:
+                        past_topics = db.get_recent_topics(limit=100) or []
+                    try:
+                        recent_history = db.get_recent_history(limit=10, language=lang_id) or []
+                    except Exception:
+                        recent_history = []
+
+                    recent_snippets = []
+                    for h in recent_history[:5]:
+                        code_snip = h.get("code", "")
+                        first_line = next((l for l in code_snip.splitlines() if l.strip()), "")
+                        if len(first_line) > 120:
+                            first_line = first_line[:117] + "..."
+                        recent_snippets.append(f"{h.get('topic')} -> {first_line}")
+
+                    prompt = build_prompt(lang, past_topics, recent_snippets)
                     continue
 
-                # All good, store and return (also attach DB id so we can mark as uploaded)
-                entry_id = db.add_history(content)
-                content['db_id'] = entry_id
+                # attach language id and persist
+                content["language"] = lang_id
+                try:
+                    entry_id = db.add_history(content)
+                except Exception:
+                    entry_id = None
+                content["db_id"] = entry_id
                 return content
+
             except Exception as e:
-                print(f"Error generating content: {e}. Attempt {attempt+1}/{max_attempts}")
+                print(f"Error generating content on attempt {attempt}: {e}")
                 continue
-        # If we reach here, we couldn't generate valid content
-        print("AI generation exhausted attempts. Returning None to indicate failure.")
+
+        print("AI generation exhausted attempts. Returning None.")
         return None
 
     def _get_mock_content(self):
@@ -138,5 +199,7 @@ class ContentManager:
             "code": "const nums = [1, 2, 3, 4];\n\nconst sum = nums.reduce((acc, curr) => {\n  return acc + curr;\n}, 0);\n\nconsole.log(sum);",
             "title": "Master Array Reduce in 10 Seconds! 🚀 #shorts #javascript",
             "description": "Learn how to use the reduce method in JavaScript. #shorts #webdev #coding",
-            "tags": ["javascript", "coding", "webdev"]
+            "tags": ["javascript", "coding", "webdev"],
+            "language": "javascript",
         }
+

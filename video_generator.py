@@ -25,29 +25,101 @@ import math
 
 class CodeExecutor:
     @staticmethod
-    def run_node(code):
-        """Run Node.js code and return real output or error"""
-        with tempfile.NamedTemporaryFile(suffix='.js', mode='w', delete=False) as f:
-            f.write(code)
-            temp_path = f.name
-
+    def run_code(language, code, timeout=5):
+        """Run code for the given language and return (output, returncode).
+        Supports: javascript, python, cpp, java (basic)."""
+        lang = (language or '').lower()
         try:
-            # Run node with a timeout
-            result = subprocess.run(
-                ['node', temp_path],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            output = result.stdout if result.stdout else result.stderr
-            return output.strip(), result.returncode
+            tmpdir = tempfile.mkdtemp()
+            if lang == 'javascript' or lang == 'js':
+                fname = os.path.join(tmpdir, 'index.js')
+                with open(fname, 'w') as f:
+                    f.write(code)
+                cmd = ['node', fname]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                out = proc.stdout if proc.stdout else proc.stderr
+                return out.strip(), proc.returncode
+
+            if lang == 'python' or lang == 'py':
+                fname = os.path.join(tmpdir, 'index.py')
+                with open(fname, 'w') as f:
+                    f.write(code)
+                py_cmd = shutil.which('python3') or shutil.which('python')
+                if not py_cmd:
+                    return 'Error: python not found on PATH', 1
+                proc = subprocess.run([py_cmd, fname], capture_output=True, text=True, timeout=timeout)
+                out = proc.stdout if proc.stdout else proc.stderr
+                return out.strip(), proc.returncode
+
+            if lang == 'cpp' or lang == 'c++':
+                fname = os.path.join(tmpdir, 'index.cpp')
+                exe = os.path.join(tmpdir, 'a.out')
+                with open(fname, 'w') as f:
+                    f.write(code)
+                gpp = shutil.which('g++')
+                if not gpp:
+                    return 'Error: g++ not found on PATH', 1
+                compile = subprocess.run([gpp, fname, '-o', exe], capture_output=True, text=True)
+                if compile.returncode != 0:
+                    return compile.stderr.strip() or compile.stdout.strip(), compile.returncode
+                proc = subprocess.run([exe], capture_output=True, text=True, timeout=timeout)
+                out = proc.stdout if proc.stdout else proc.stderr
+                return out.strip(), proc.returncode
+
+            if lang == 'java':
+                # Wrap code into Main.java if it doesn't contain a public class Main
+                java_path = os.path.join(tmpdir, 'Main.java')
+                if 'class ' in code and 'public static void main' in code:
+                    # Assume user provided full java class; write as-is
+                    with open(java_path, 'w') as f:
+                        f.write(code)
+                else:
+                    # Wrap into Main
+                    wrapped = 'public class Main { public static void main(String[] args) { '\
+                              + code.replace('"', '\"') + ' } }'
+                    with open(java_path, 'w') as f:
+                        f.write(wrapped)
+                javac = shutil.which('javac')
+                java = shutil.which('java')
+                if not javac or not java:
+                    return 'Error: javac/java not found on PATH', 1
+                compile = subprocess.run([javac, java_path], capture_output=True, text=True, cwd=tmpdir)
+                if compile.returncode != 0:
+                    return compile.stderr.strip() or compile.stdout.strip(), compile.returncode
+                proc = subprocess.run([java, '-cp', tmpdir, 'Main'], capture_output=True, text=True, timeout=timeout)
+                out = proc.stdout if proc.stdout else proc.stderr
+                return out.strip(), proc.returncode
+
+            # Basic support for Go if 'go' is available on PATH; otherwise skip execution gracefully.
+            if lang in ('go', 'golang'):
+                go_cmd = shutil.which('go')
+                if not go_cmd:
+                    return ('', 0)
+                # write code to main.go and run
+                go_file = os.path.join(tmpdir, 'main.go')
+                with open(go_file, 'w') as f:
+                    f.write(code)
+                proc = subprocess.run([go_cmd, 'run', go_file], capture_output=True, text=True, timeout=timeout)
+                out = proc.stdout if proc.stdout else proc.stderr
+                return out.strip(), proc.returncode
+
+            # If language not explicitly supported, return empty output (non-fatal)
+            return ('', 0)
         except subprocess.TimeoutExpired:
-            return "Error: Execution timed out (5s limit)", 1
+            return f'Error: Execution timed out ({timeout}s limit)', 1
         except Exception as e:
-            return f"Error: {str(e)}", 1
+            return f'Error: {str(e)}', 1
         finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            try:
+                if os.path.isdir(tmpdir):
+                    for p in os.listdir(tmpdir):
+                        try:
+                            os.remove(os.path.join(tmpdir, p))
+                        except Exception:
+                            pass
+                    os.rmdir(tmpdir)
+            except Exception:
+                pass
 
 class ShortsVideoGenerator:
     def __init__(self, cursor_style='_'):
@@ -56,24 +128,151 @@ class ShortsVideoGenerator:
         self.height = 1920
         self.fps = 30
         
-        self.cursor_style = cursor_style
-        
-        # Theme - Single Unified Background (No separate editor box)
-        self.bg_color = (30, 34, 40)  # Deep One Dark
-        self.text_color = (220, 223, 228)
-        
-        # Syntax Colors (Vibrant)
-        self.colors = {
-            'keyword': (198, 120, 221),   # Purple
-            'function': (97, 175, 239),   # Blue
-            'string': (152, 195, 121),    # Green
-            'number': (209, 154, 102),    # Orange
-            'comment': (120, 120, 120),   # Grey
-            'operator': (86, 182, 194),   # Cyan
-            'bracket': (220, 223, 228),   # White
-            'error': (224, 108, 117),     # Red
-            'cursor': (82, 139, 255)      # Bright Blue
+        # Define random options
+        # Modern readable palettes (avoid harsh green/light blue themes)
+        self.themes = {
+            'dracula': {
+                'bg_color': (40, 42, 54),
+                'text_color': (248, 248, 242),
+                'colors': {
+                    'keyword': (189, 147, 249),
+                    'function': (80, 250, 123),
+                    'string': (255, 121, 198),
+                    'number': (247, 140, 108),
+                    'comment': (98, 114, 164),
+                    'operator': (139, 233, 253),
+                    'bracket': (248, 248, 242),
+                    'error': (255, 85, 85),
+                    'cursor': (98, 114, 164),
+                    'builtin': (255, 184, 108)
+                }
+            },
+            'monokai': {
+                'bg_color': (39, 40, 34),
+                'text_color': (248, 248, 242),
+                'colors': {
+                    'keyword': (249, 38, 114),
+                    'function': (166, 226, 46),
+                    'string': (230, 219, 116),
+                    'number': (174, 129, 255),
+                    'comment': (117, 113, 94),
+                    'operator': (248, 248, 242),
+                    'bracket': (248, 248, 242),
+                    'error': (249, 38, 114),
+                    'cursor': (166, 226, 46),
+                    'builtin': (102, 217, 239)
+                }
+            },
+            'solarized_dark': {
+                'bg_color': (0, 43, 54),
+                'text_color': (131, 148, 150),
+                'colors': {
+                    'keyword': (38, 139, 210),
+                    'function': (42, 161, 152),
+                    'string': (133, 153, 0),
+                    'number': (181, 137, 0),
+                    'comment': (88, 110, 117),
+                    'operator': (131, 148, 150),
+                    'bracket': (131, 148, 150),
+                    'error': (220, 50, 47),
+                    'cursor': (42, 161, 152),
+                    'builtin': (211, 54, 130)
+                }
+            },
+            'github_light': {
+                'bg_color': (255, 255, 255),
+                'text_color': (36, 41, 46),
+                'colors': {
+                    'keyword': (0, 90, 200),
+                    'function': (6, 125, 70),
+                    'string': (215, 56, 38),
+                    'number': (153, 44, 144),
+                    'comment': (115, 118, 123),
+                    'operator': (36, 41, 46),
+                    'bracket': (36, 41, 46),
+                    'error': (200, 60, 60),
+                    'cursor': (0, 90, 200),
+                    'builtin': (153, 44, 144)
+                }
+            }
         }
+        
+        self.cursors = ['_', '|', '█', '▊', '▌']
+        # gTTS language codes - avoid deprecated variants (e.g. 'en-in') to prevent fallback warnings
+        self.tts_voices = ['en', 'en-us', 'en-gb', 'en-ca']  # gTTS langs
+        self.languages = ['javascript', 'python', 'java', 'cpp', 'csharp']
+        self.language_extensions = {'javascript': 'js', 'python': 'py', 'java': 'java', 'cpp': 'cpp', 'csharp': 'cs'}
+        self.language_commands = {'javascript': 'node', 'python': 'python3', 'java': 'java', 'cpp': 'g++', 'csharp': 'dotnet'}
+        self.video_styles = ['typing', 'fade_in', 'slide_up']  # Different animation styles
+        
+        # Randomly select for this instance
+        self.selected_theme = random.choice(list(self.themes.keys()))
+        
+        # Smart color selection based on theme
+        theme = self.themes[self.selected_theme]
+        bg_brightness = sum(theme['bg_color']) / 3
+        if bg_brightness > 128:  # Light background
+            self.question_colors = [(0, 0, 0), (0, 0, 255), (0, 128, 0), (255, 0, 0), (128, 0, 128)]  # Dark colors
+        else:  # Dark background
+            self.question_colors = [(255, 255, 255), (255, 215, 0), (173, 216, 230), (255, 182, 193), (152, 195, 121)]  # Light colors
+        
+        self.selected_cursor = random.choice(self.cursors)
+        self.selected_question_color = random.choice(self.question_colors)
+        self.selected_tts_voice = random.choice(self.tts_voices)
+        self.selected_language = random.choice(self.languages)
+        self.selected_style = random.choice(self.video_styles)
+        # Terminal themes (separate from code themes) to provide varied terminal looks
+        self.terminal_themes = {
+            'classic_dark': {
+                'bg': (18, 18, 18),
+                'header_bg': (30, 30, 30),
+                'text': (200, 200, 200),
+                'accent': (80, 200, 120),
+                'cursor': (80, 200, 120),
+                'success': (80, 200, 120),
+                'error': (220, 85, 85)
+            },
+            'matrix': {
+                'bg': (2, 17, 8),
+                'header_bg': (5, 30, 10),
+                'text': (150, 255, 150),
+                'accent': (80, 255, 120),
+                'cursor': (80, 255, 120),
+                'success': (80, 255, 120),
+                'error': (255, 80, 80)
+            },
+            'solarized_term': {
+                'bg': (7, 54, 66),
+                'header_bg': (0, 43, 54),
+                'text': (131, 148, 150),
+                'accent': (38, 139, 210),
+                'cursor': (38, 139, 210),
+                'success': (42, 161, 152),
+                'error': (220, 50, 47)
+            },
+            'light_terminal': {
+                'bg': (245, 247, 250),
+                'header_bg': (230, 233, 237),
+                # Use darker text on light backgrounds to ensure contrast
+                'text': (20, 20, 20),
+                'accent': (0, 102, 204),
+                'cursor': (0, 102, 204),
+                'success': (0, 120, 60),
+                'error': (180, 40, 40)
+            }
+        }
+        self.selected_terminal_theme = random.choice(list(self.terminal_themes.keys()))
+        self.terminal_theme = self.terminal_themes[self.selected_terminal_theme]
+        # Allow cursor per terminal theme to be randomized
+        self.selected_term_cursor = random.choice(self.cursors)
+        
+        self.cursor_style = self.selected_cursor
+        
+        # Apply selected theme
+        theme = self.themes[self.selected_theme]
+        self.bg_color = theme['bg_color']
+        self.text_color = theme['text_color']
+        self.colors = theme['colors']
         
         self.mac_colors = [(255, 95, 86), (255, 189, 46), (39, 201, 63)]
         
@@ -224,14 +423,16 @@ class ShortsVideoGenerator:
         if not line:
             return []
 
+        # Broadened token specs to handle Java, C#, Go, Python, JS common keywords and patterns
         token_specs = [
-            ('keyword', r'\b(function|const|let|var|return|if|else|for|while|console|log|await|async|import|from)\b'),
-            ('string', r'(".*?"|\'.*?\')'),
-            ('number', r'\b(\d+)\b'),
-            ('comment', r'(//.*)'),
-            ('operator', r'([+\-*/%=<>!&|]+)'),
-            ('function', r'(\w+)(?=\()'),
-            ('bracket', r'([(){}\[\];,])')
+              ('builtin', r"\b(len|print|println|printf|append|push|pop|map|filter|reduce|range|make|fmt\.Println|fmt\.Printf|console\.log|System\.out\.println|toString|parseInt|parseFloat|JSON\.stringify)\b"),
+              ('keyword', r"\b(function|const|let|var|return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|await|async|import|from|class|new|this|super|extends|implements|interface|package|public|private|protected|static|final|void|int|long|short|byte|char|boolean|true|false|null)\b"),
+              ('string', r'(".*?"|\'.*?\')'),
+              ('number', r'\b(\d+(?:\.\d+)?)\b'),
+              ('comment', r'(//.*|/\*[\s\S]*?\*/|#.*)'),
+              ('operator', r'([+\-*/%=<>!&|:^~]+)'),
+              ('function', r'(\b\w+)(?=\()'),
+              ('bracket', r'([(){}\[\];,])')
         ]
 
         combined = '|'.join(f"(?P<{name}>{pattern})" for name, pattern in token_specs)
@@ -286,22 +487,35 @@ class ShortsVideoGenerator:
             lines.append(current)
         return lines
 
-    def generate_video(self, question, code, filename="viral_short"):
-        print(f"🚀 Generating Viral Short: {filename}")
+    def generate_video(self, question, code, filename="viral_short", output_text=None, language=None):
+        # Allow passing an explicit language per video; otherwise pick a random one per-call
+        if language and language in self.languages:
+            self.selected_language = language
+        else:
+            # randomize per call to avoid repeated Python-only output
+            self.selected_language = random.choice(self.languages)
+        print(f"🚀 Generating Viral Short: {filename} (lang={self.selected_language})")
         
-        # 1. Execute Code to get Real Output
-        print("⚙️ Executing code...")
-        real_output, return_code = CodeExecutor.run_node(code)
-        print(f"📝 Output: {real_output}")
+        # 1. Use AI-provided code as the "result" instead of executing it locally.
+        # This avoids requiring language runtimes and prevents execution errors.
+        print("⚙️ Using AI-provided code as output (execution disabled)")
+        # Use the AI-provided output_text (preferred) otherwise fall back to code as display
+        real_output = (output_text.strip() if output_text else (code.strip() if code else ""))
+        return_code = 0
 
         # 2. Audio Setup (TTS)
         # Generate TTS only when audio generation is enabled
         tts_path = None
-        tts_duration_ms = max(1000, len(question) * 55) # approximate fallback (ms)
+        # Deterministic fallback duration per character (ms) when TTS audio not available.
+        try:
+            base_ms_per_char = float(os.getenv('BASE_MS_PER_CHAR', '55'))
+        except Exception:
+            base_ms_per_char = 55.0
+        tts_duration_ms = max(300, int(len(question) * base_ms_per_char))  # approximate fallback (ms)
         if self.audio_enabled:
             try:
                 print("🗣️ Generating TTS...")
-                tts = gTTS(text=question, lang='en', slow=False)
+                tts = gTTS(text=question, lang=self.selected_tts_voice, slow=False)
                 tts_path = os.path.join(self.audio_dir, "tts.mp3")
                 tts.save(tts_path)
                 tts_audio = AudioSegment.from_mp3(tts_path)
@@ -309,16 +523,45 @@ class ShortsVideoGenerator:
             except Exception as e:
                 logging.warning(f"TTS or audio load failed, continuing without audio: {e}")
                 tts_path = None
+                # keep deterministic fallback duration (scaled by speedup later)
         
         # Calculate typing speed to match TTS
-        # We want the question typing to finish exactly when TTS finishes
-        # Allow a user-adjustable typing speed multiplier via env var TYPING_SPEED_FACTOR
+        # We want the question typing to finish exactly when TTS finishes.
+        # Use a single SPEEDUP_FACTOR env var to speed both speech and typing together.
         total_chars_question = len(question)
         try:
-            typing_speed_factor = float(os.getenv('TYPING_SPEED_FACTOR', '1.0'))
+            speedup = float(os.getenv('SPEEDUP_FACTOR', '1.0'))
+            if speedup <= 0:
+                speedup = 1.0
         except Exception:
-            typing_speed_factor = 1.0
-        ms_per_char_question = (tts_duration_ms / max(1, total_chars_question)) * typing_speed_factor
+            speedup = 1.0
+
+        # If pydub is available, we can physically speed up the TTS audio so playback is faster.
+        if self.audio_enabled and tts_path and speedup != 1.0:
+            try:
+                from pydub import effects
+                tts_audio = effects.speedup(tts_audio, playback_speed=speedup)
+                # overwrite the tts file with the sped-up version
+                tts_audio.export(tts_path, format='mp3')
+                tts_duration_ms = len(tts_audio)
+            except Exception:
+                # Fallback: adjust perceived duration numerically
+                try:
+                    tts_duration_ms = int(tts_duration_ms / speedup)
+                except Exception:
+                    pass
+
+        # If audio isn't enabled or tts_path wasn't produced, scale fallback duration by speedup
+        if (not self.audio_enabled) or (tts_path is None):
+            try:
+                tts_duration_ms = int(tts_duration_ms / speedup)
+            except Exception:
+                pass
+
+        # Compute ms per character so typing finishes when TTS finishes
+        ms_per_char_question = (tts_duration_ms / max(1, total_chars_question))
+        if self.selected_style == 'fade_in':
+            ms_per_char_question *= 2  # Slower typing for fade effect
         frames_per_char_question = max(1, int((ms_per_char_question / 1000) * self.fps))
 
         # Stream frames directly to disk to avoid keeping all frames in memory
@@ -346,6 +589,16 @@ class ShortsVideoGenerator:
         header_y = 100
         question_y = 200
         code_y = 380 # Start code lower to give space for question
+        # Width reserved for line numbers (pixels). Increase for extra space to the right of numbers.
+        try:
+            line_number_area_width = int(os.getenv('LINE_NUMBER_AREA_WIDTH', '120'))
+        except Exception:
+            line_number_area_width = 120
+        code_x = margin_x + line_number_area_width
+        try:
+            right_padding = int(os.getenv('RIGHT_PADDING', '60'))
+        except Exception:
+            right_padding = 60
         
         # --- PHASE 1: HEADER & BACKGROUND ---
         def create_bg():
@@ -361,7 +614,7 @@ class ShortsVideoGenerator:
                 draw.ellipse([x, header_y, x + dot_size, header_y + dot_size], fill=color)
             
             # Filename
-            draw.text((self.width//2 - 100, header_y - 5), "index.js", font=font_header, fill=self.colors['comment'])
+            draw.text((self.width//2 - 100, header_y - 5), f"index.{self.language_extensions[self.selected_language]}", font=font_header, fill=self.colors['comment'])
             return img, draw
 
         # --- PHASE 2: QUESTION TYPING (Synced with TTS) ---
@@ -388,21 +641,34 @@ class ShortsVideoGenerator:
         img_tmp, draw_tmp = create_bg()
         q_line_h = draw_tmp.textbbox((0,0), "Ay", font=font_question)[3] - draw_tmp.textbbox((0,0), "Ay", font=font_question)[1]
         question_height_px = q_line_h * max(1, len(wrapped_question)) + 20
-        code_y = question_y + question_height_px + 60
+        # Allow configurable gap between the question block and the code block
+        try:
+            question_code_gap = int(os.getenv('QUESTION_CODE_GAP', '60'))
+        except Exception:
+            question_code_gap = 60
+        code_y = question_y + question_height_px + question_code_gap
+
+        slide_offset = 50 if self.selected_style == 'slide_up' else 0
+        char_count = 0
 
         for char in flat_question:
             img, draw = create_bg()
 
             # Draw typed question so far
             current_q_text += char
+            char_count += 1
+
+            # Update slide for slide_up style
+            if self.selected_style == 'slide_up':
+                slide_offset = max(0, 50 - (char_count * 1))  # Slide up 1 pixel per char
 
             # We need to re-wrap the current text to draw it correctly line by line
             # This is a bit inefficient but ensures correct wrapping animation
             curr_lines = current_q_text.split('\n')
 
-            y = question_y
+            y = question_y + slide_offset
             for line in curr_lines:
-                draw.text((margin_x, y), line, font=font_question, fill=self.colors['keyword']) # Purple question
+                draw.text((margin_x, y), line, font=font_question, fill=self.selected_question_color)
                 y += 80
 
             # Cursor
@@ -480,7 +746,11 @@ class ShortsVideoGenerator:
             base_frames_per_char_code = int(os.getenv('FRAMES_PER_CHAR_CODE', '2'))
         except Exception:
             base_frames_per_char_code = 2
-        frames_per_char_code = max(1, int(base_frames_per_char_code * typing_speed_factor))
+        # Scale code typing speed with SPEEDUP_FACTOR (higher -> fewer frames per char)
+        try:
+            frames_per_char_code = max(1, int(base_frames_per_char_code / speedup))
+        except Exception:
+            frames_per_char_code = max(1, int(base_frames_per_char_code))
         
         for line_idx, line in enumerate(wrapped_code_lines):
             current_code_lines.append("")
@@ -495,7 +765,7 @@ class ShortsVideoGenerator:
                 # Draw Question (Static)
                 y = question_y
                 for q_line in wrapped_question:
-                    draw.text((margin_x, y), q_line, font=font_question, fill=self.colors['keyword'])
+                    draw.text((margin_x, y), q_line, font=font_question, fill=self.selected_question_color)
                     y += 80
                 
                 # Draw Code
@@ -520,7 +790,7 @@ class ShortsVideoGenerator:
                             draw.text((margin_x, cy), line_num, font=font_code, fill=self.colors['comment'])
                         # Colorize via tokens
                         tokens = self.tokenize_code(sub)
-                        x = margin_x + 50
+                        x = code_x
                         for token, typ in tokens:
                             color = self.colors.get(typ, self.text_color)
                             draw.text((x, cy), token, font=font_code, fill=color)
@@ -531,7 +801,7 @@ class ShortsVideoGenerator:
                 # Compute cursor position considering wrapping of the last line
                 last_wrapped = wrap_code_line(draw, current_code_lines[-1], font_code, max_code_width_px)
                 last_line_width = draw.textlength(last_wrapped[-1], font=font_code) if last_wrapped else 0
-                draw.text((margin_x + 50 + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
+                draw.text((code_x + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
                 
                 append_frame(img, frames_per_char_code)
                 
@@ -553,17 +823,28 @@ class ShortsVideoGenerator:
     # No enter/keyboard sounds: omit enter sound
         
         # --- PHASE 4: TERMINAL EXECUTION ---
-        # Slide up terminal
+        # --- PHASE 4: TERMINAL EXECUTION ---
+        # Terminal slide animation: randomly choose an entry direction: up, left, right
         term_height = 600
-        term_y_start = self.height
         term_y_end = self.height - term_height
-        
+        directions = ['up', 'left', 'right']
+        term_direction = random.choice(directions)
+
+        # Terminal theme colors
+        t_bg = self.terminal_theme.get('bg', (20, 20, 20))
+        t_header_bg = self.terminal_theme.get('header_bg', (40, 40, 40))
+        t_text = self.terminal_theme.get('text', (220, 220, 220))
+        t_accent = self.terminal_theme.get('accent', (80, 200, 120))
+        t_cursor_color = self.terminal_theme.get('cursor', t_accent)
+        # Inner padding inside the terminal box (small, to avoid large left gaps)
+        term_inner_pad = int(os.getenv('TERM_INNER_PADDING_PX', '24'))
+
         for i in range(20):
             img, draw = create_bg()
-            # Draw static content
+            # Draw static content above the terminal
             y = question_y
             for q_line in wrapped_question:
-                draw.text((margin_x, y), q_line, font=font_question, fill=self.colors['keyword'])
+                draw.text((margin_x, y), q_line, font=font_question, fill=self.selected_question_color)
                 y += 80
             cy = code_y
             for idx, c_line in enumerate(current_code_lines):
@@ -573,24 +854,39 @@ class ShortsVideoGenerator:
                         line_num = str(idx + 1)
                         draw.text((margin_x, cy), line_num, font=font_code, fill=self.colors['comment'])
                     tokens = self.tokenize_code(sub)
-                    x = margin_x + 50
+                    x = code_x
                     for token, typ in tokens:
                         color = self.colors.get(typ, self.text_color)
                         draw.text((x, cy), token, font=font_code, fill=color)
                         x += draw.textlength(token, font=font_code)
                     cy += 70
-                
-            # Draw Terminal Box
+
+            # Draw Terminal Box with different slide directions; terminal anchored at bottom
             progress = i / 20
-            curr_term_y = term_y_start - (term_height * progress)
-            
-            draw.rectangle([0, curr_term_y, self.width, self.height], fill=(20, 20, 20))
-            draw.rectangle([0, curr_term_y, self.width, curr_term_y + 60], fill=(40, 40, 40)) # Header
-            draw.text((margin_x, curr_term_y + 10), "Terminal", font=font_header, fill=self.text_color)
-            
+            if term_direction == 'up':
+                # Slide terminal up from off-screen bottom into place
+                curr_term_y = int(self.height + (term_y_end - self.height) * progress)
+                # main body
+                draw.rectangle([0, curr_term_y, self.width, curr_term_y + term_height], fill=t_bg)
+                # header
+                draw.rectangle([0, curr_term_y, self.width, curr_term_y + 60], fill=t_header_bg)
+                draw.text((term_inner_pad, curr_term_y + 10), "Terminal", font=font_header, fill=t_text)
+            elif term_direction == 'left':
+                # Slide terminal in from left to its bottom-aligned area
+                curr_term_x = int(-self.width + (self.width * progress))
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_height], fill=t_bg)
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + 60], fill=t_header_bg)
+                draw.text((curr_term_x + term_inner_pad, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+            else:  # right
+                # Slide terminal in from right to bottom area
+                curr_term_x = int(self.width - (self.width * progress))
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_height], fill=t_bg)
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + 60], fill=t_header_bg)
+                draw.text((curr_term_x + term_inner_pad, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+
             append_frame(img, 1)
 
-        # Waiting State (Blinking Cursor + $)
+        # Waiting State (Blinking Cursor + $) - use terminal colors and cursor shape
         base_term_img = last_frame_img.copy() if last_frame_img is not None else Image.new('RGB', (self.width, self.height), self.bg_color)
         prompt_y = term_y_end + 100
 
@@ -598,24 +894,26 @@ class ShortsVideoGenerator:
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
 
-            # Blink cursor
+            # Blink cursor using terminal cursor char and color; use inner terminal padding
             if _ % 15 < 8:
-                draw.text((margin_x, prompt_y), "$ _", font=font_terminal, fill=self.colors['string'])
+                draw.text((term_inner_pad, prompt_y), "$ " + self.selected_term_cursor, font=font_terminal, fill=t_text)
             else:
-                draw.text((margin_x, prompt_y), "$", font=font_terminal, fill=self.colors['string'])
+                draw.text((term_inner_pad, prompt_y), "$ ", font=font_terminal, fill=t_text)
 
             append_frame(img, 1)
 
         # Type Command
-        command = "node index.js"
+        command = f"{self.language_commands[self.selected_language]} index.{self.language_extensions[self.selected_language]}"
         curr_cmd = "$ "
         for char in command:
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
             curr_cmd += char
-            draw.text((margin_x, prompt_y), curr_cmd + "_", font=font_terminal, fill=self.colors['string'])
+            # Use terminal theme colors and cursor shape for prompt
+            prompt_display = curr_cmd + self.selected_term_cursor
+            draw.text((term_inner_pad, prompt_y), prompt_display, font=font_terminal, fill=t_text)
             append_frame(img, 2) # Slow typing
-            
+
             # Key sound for terminal typing
             if char.strip() and self.audio_enabled:
                 time_ms = int((frame_count / self.fps) * 1000)
@@ -641,13 +939,19 @@ class ShortsVideoGenerator:
         for _ in range(90):
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
-            draw.text((margin_x, prompt_y), curr_cmd, font=font_terminal, fill=self.colors['string'])
-            
+            # Use terminal inner padding and terminal text color for command
+            draw.text((term_inner_pad, prompt_y), curr_cmd, font=font_terminal, fill=t_text)
+
             res_y = prompt_y + 60
             for line in output_lines:
-                draw.text((margin_x, res_y), line, font=font_terminal, fill=result_color)
+                # Colorize output using terminal error/success colors when possible
+                if return_code != 0:
+                    out_color = self.terminal_theme.get('error', result_color)
+                else:
+                    out_color = self.terminal_theme.get('success', result_color)
+                draw.text((term_inner_pad, res_y), line, font=font_terminal, fill=out_color)
                 res_y += 50
-                
+
             append_frame(img, 1)
 
         # --- RENDER VIDEO ---

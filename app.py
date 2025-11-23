@@ -87,6 +87,15 @@ if os.getenv('DB_CONNECT_AFTER_START', 'true').lower() in ('1', 'true', 'yes'):
 def index():
     return send_file('static/index.html')
 
+
+@app.route('/health', methods=['GET'])
+def health_root():
+    # Serve a small HTML health page (falls back to plain OK if file missing)
+    try:
+        return send_file('static/health.html')
+    except Exception:
+        return "OK", 200
+
 @app.route('/api/generate', methods=['POST'])
 def generate():
     data = request.json
@@ -106,7 +115,8 @@ def generate():
             'code': code,
             'title': f"{question[:50]} #shorts #coding",
             'description': question,
-            'tags': ["shorts", "coding"]
+            'tags': ["shorts", "coding"],
+            'language': data.get('language') or None
         }
         # Save to DB and generate
         entry_id = db.add_history(content)
@@ -137,7 +147,9 @@ def ai_generate():
         data = request.json or {}
         auto_upload = data.get('auto_upload', True)
         content = content_mgr.generate_content()
-        
+        if not content:
+            return jsonify({"success": False, "error": "AI generation failed or is disabled"}), 500
+
         # Process generation and optional upload through helper
         result = process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', auto_upload=auto_upload)
         if not result.get('success'):

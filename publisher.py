@@ -1,5 +1,6 @@
 import os
 from database import db
+from video_generator import ShortsVideoGenerator
 
 def process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', auto_upload=True):
     """Generate a video using `generator` and optionally upload to YouTube via `youtube_mgr`.
@@ -9,7 +10,19 @@ def process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', au
         return {"success": False, "error": "No content to generate"}
 
     filename = f"{filename_prefix}_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    video_path = generator.generate_video(content['question'], content['code'], filename)
+    # Use a fresh generator instance per video so themes/tts/language/cursor are randomized per video
+    gen = ShortsVideoGenerator()
+    # If the content specifies a desired language, validate and pass it to the generator
+    requested_lang = content.get('language')
+    if requested_lang and requested_lang in gen.languages:
+        lang_arg = requested_lang
+    else:
+        lang_arg = None
+    try:
+        # Pass expected output (if provided by AI) so the video terminal shows the correct result
+        video_path = gen.generate_video(content['question'], content['code'], filename, output_text=content.get('output'), language=lang_arg)
+    except Exception as e:
+        return {"success": False, "error": f"Video generation failed: {e}"}
 
     uploaded = False
     youtube_id = None
