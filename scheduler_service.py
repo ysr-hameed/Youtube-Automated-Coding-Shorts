@@ -38,6 +38,7 @@ class AutoScheduler:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        now = datetime.now(self.tz) if pytz else datetime.now()
         # Clean up old schedules
         try:
             deleted_old = db.delete_schedules_before_day(today)
