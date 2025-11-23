@@ -21,7 +21,7 @@ class ContentManager:
         """Generate a unique coding question and code using Gemini.
         Returns a content dict on success or None on failure.
         """
-        past_topics = db.get_recent_topics(limit=200)
+        past_topics = db.get_recent_topics(limit=100)
         # Use the current language in the prompt
         lang = self.languages[self.lang_idx % len(self.languages)]
         prompt = f"""

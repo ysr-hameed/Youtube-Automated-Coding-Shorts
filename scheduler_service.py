@@ -39,45 +39,16 @@ class AutoScheduler:
         else:
             today = datetime.now(self.tz).replace(hour=0, minute=0, second=0, microsecond=0)
         existing = db.get_schedule_for_day(today)
-        # If we already have schedules for today, decide whether to keep or recreate
-        try:
-            force_recreate = os.getenv('DAILY_FORCE_RECREATE', 'false').lower() in ('1', 'true', 'yes')
-        except Exception:
-            force_recreate = False
-
+        # Always recreate schedules for today to ensure freshness
         if existing:
-            # If force_recreate is enabled we delete and recreate exact count.
-            if force_recreate:
-                try:
-                    deleted = db.delete_schedules_for_day(today)
-                    print(f"🗑️ Deleted {deleted} existing schedules for today to recreate {count} slots")
-                except Exception as e:
-                    print(f"⚠️ Failed to delete existing schedules: {e}")
-                existing = []
-                existing_times = []
-            else:
-                # If we already have >= count schedules, just return them
-                if len(existing) >= count:
-                    try:
-                        print(f"🗓️ Existing schedules for today ({len(existing)}):")
-                        for s in existing:
-                            sa = s.get('scheduled_at')
-                            print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
-                    except Exception:
-                        pass
-                    return existing
-                # Otherwise we will create only the missing number of schedules
-                needed = max(0, count - len(existing))
-                print(f"�️ Found {len(existing)} existing schedules, will create {needed} more to reach {count} slots")
-                # Build a list of existing datetimes to respect min_gap when adding new ones
-                existing_times = []
-                for s in existing:
-                    try:
-                        existing_times.append(s.get('scheduled_at'))
-                    except Exception:
-                        continue
-        else:
-            existing_times = []
+            try:
+                deleted = db.delete_schedules_for_day(today)
+                print(f"🗑️ Deleted {deleted} existing schedules for today")
+            except Exception as e:
+                print(f"⚠️ Failed to delete existing schedules: {e}")
+        
+        # Create new schedules
+        existing_times = []
 
         # window start and end
         # Check for explicit times via env var (comma-separated HH:MM values in IST)
