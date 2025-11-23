@@ -57,6 +57,20 @@ class Database:
         self.mock_config = {}
         self.mock_history = []
         self.mock_schedules = []
+        # Path to persist mock schedules when no DB is available (helps production/test stability)
+        try:
+            self.mock_store_path = os.path.join('output', 'mock_schedules.json')
+            os.makedirs('output', exist_ok=True)
+            if os.path.exists(self.mock_store_path):
+                try:
+                    with open(self.mock_store_path, 'r') as _f:
+                        data = json.load(_f)
+                        # Expect a list of entries with id and scheduled_at isoformat
+                        self.mock_schedules = data if isinstance(data, list) else []
+                except Exception:
+                    self.mock_schedules = []
+        except Exception:
+            self.mock_store_path = None
         # Connection tuning from env
         try:
             self.db_connect_timeout = int(os.getenv('DB_CONNECT_TIMEOUT', '10'))
@@ -303,12 +317,49 @@ class Database:
                 return new_id
         else:
             # Mock schedule
+            # Deduplicate: avoid adding a schedule within 60s of an existing scheduled time
+            from datetime import datetime
+            new_ts = scheduled_at if isinstance(scheduled_at, (int, float)) else scheduled_at
+            # Normalize to iso string for storage
+            if hasattr(scheduled_at, 'isoformat'):
+                new_iso = scheduled_at.isoformat()
+            else:
+                new_iso = str(scheduled_at)
+            for e in self.mock_schedules:
+                try:
+                    existing_iso = e.get('scheduled_at')
+                    # parse to datetime
+                    if isinstance(existing_iso, str):
+                        existing_dt = datetime.fromisoformat(existing_iso)
+                    else:
+                        existing_dt = existing_iso
+                    if hasattr(scheduled_at, 'timestamp') and hasattr(existing_dt, 'timestamp'):
+                        if abs((scheduled_at - existing_dt).total_seconds()) < 60:
+                            # Too close to an existing slot; return existing id
+                            return e.get('id')
+                except Exception:
+                    continue
+
             entry = {
                 'id': len(self.mock_schedules) + 1,
-                'scheduled_at': scheduled_at,
+                'scheduled_at': new_iso,
                 'executed': False,
             }
             self.mock_schedules.append(entry)
+            # Cap mock schedule list to avoid unbounded growth
+            try:
+                max_mock = int(os.getenv('MOCK_SCHEDULE_MAX', '500'))
+            except Exception:
+                max_mock = 500
+            if len(self.mock_schedules) > max_mock:
+                self.mock_schedules = self.mock_schedules[-max_mock:]
+            # Persist to disk if possible
+            try:
+                if self.mock_store_path:
+                    with open(self.mock_store_path, 'w') as _f:
+                        json.dump(self.mock_schedules, _f)
+            except Exception:
+                pass
             return entry['id']
 
     def get_schedule_for_day(self, date):
@@ -335,6 +386,44 @@ class Database:
                         'result': e.get('result')
                     })
             return result
+
+    def delete_schedules_for_day(self, date):
+        """Delete all schedules for the given day (date is a datetime at midnight in local tz).
+        Returns number of deleted schedules.
+        """
+        conn = self.get_conn()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM schedules WHERE date_trunc('day', scheduled_at) = date_trunc('day', %s) RETURNING id", (date,))
+                try:
+                    rows = cur.fetchall()
+                    return len(rows)
+                except Exception:
+                    return 0
+        else:
+            # Remove from mock_schedules
+            from datetime import datetime
+            before = len(self.mock_schedules)
+            remaining = []
+            for e in self.mock_schedules:
+                d = e.get('scheduled_at')
+                if isinstance(d, str):
+                    try:
+                        d = datetime.fromisoformat(d)
+                    except Exception:
+                        d = None
+                if d and d.date() == date.date():
+                    continue
+                remaining.append(e)
+            self.mock_schedules = remaining
+            # Persist changes
+            try:
+                if self.mock_store_path:
+                    with open(self.mock_store_path, 'w') as _f:
+                        json.dump(self.mock_schedules, _f)
+            except Exception:
+                pass
+            return before - len(self.mock_schedules)
 
     def mark_schedule_executed(self, schedule_id, executed_at=None, result=None):
         conn = self.get_conn()

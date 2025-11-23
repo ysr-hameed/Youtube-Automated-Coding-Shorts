@@ -321,7 +321,19 @@ class ShortsVideoGenerator:
         ms_per_char_question = (tts_duration_ms / max(1, total_chars_question)) * typing_speed_factor
         frames_per_char_question = max(1, int((ms_per_char_question / 1000) * self.fps))
 
-        frames = []
+        # Stream frames directly to disk to avoid keeping all frames in memory
+        temp_video = os.path.join(self.output_dir, "temp_vid.mp4")
+        out = cv2.VideoWriter(temp_video, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (self.width, self.height))
+        frame_count = 0
+        last_frame_img = None
+
+        def append_frame(img, repeats=1):
+            nonlocal frame_count, last_frame_img
+            bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            for _ in range(repeats):
+                out.write(bgr)
+                frame_count += 1
+            last_frame_img = img
         
         # --- VISUAL CONFIG ---
         # Huge Fonts
@@ -397,13 +409,12 @@ class ShortsVideoGenerator:
             cursor_pos = draw.textlength(curr_lines[-1], font=font_question)
             draw.text((margin_x + cursor_pos, y - 80), self.cursor_style, font=font_question, fill=self.colors['cursor'])
 
-            # Add frames
-            for _ in range(frames_per_char_question):
-                frames.append(img)
+            # Add frames (streamed)
+            append_frame(img, frames_per_char_question)
 
             # Key sound events: append 'key' event (sample index) or fall back to click
             if char.strip() and self.audio_enabled:
-                time_ms = int((len(frames) / self.fps) * 1000)
+                time_ms = int((frame_count / self.fps) * 1000)
                 if time_ms - last_key_event_ms >= key_min_interval_ms:
                     if self.key_samples:
                         sample_idx = random.randrange(0, len(self.key_samples))
@@ -412,8 +423,9 @@ class ShortsVideoGenerator:
                         audio_events.append((time_ms, 'key', None))
                     last_key_event_ms = time_ms
 
-        # Hold after question
-        for _ in range(15): frames.append(frames[-1])
+        # Hold after question (repeat last written frame)
+        if last_frame_img is not None:
+            append_frame(last_frame_img, 15)
 
         # --- PHASE 3: CODE TYPING ---
         code_lines = code.split('\n')
@@ -521,12 +533,11 @@ class ShortsVideoGenerator:
                 last_line_width = draw.textlength(last_wrapped[-1], font=font_code) if last_wrapped else 0
                 draw.text((margin_x + 50 + last_line_width, cy - 70), self.cursor_style, font=font_code, fill=self.colors['cursor'])
                 
-                for _ in range(frames_per_char_code):
-                    frames.append(img)
+                append_frame(img, frames_per_char_code)
                 
                 # Key sound events for code typing
                 if char.strip() and self.audio_enabled:
-                    time_ms = int((len(frames) / self.fps) * 1000)
+                    time_ms = int((frame_count / self.fps) * 1000)
                     if time_ms - last_key_event_ms >= key_min_interval_ms:
                         if self.key_samples:
                             sample_idx = random.randrange(0, len(self.key_samples))
@@ -576,23 +587,23 @@ class ShortsVideoGenerator:
             draw.rectangle([0, curr_term_y, self.width, curr_term_y + 60], fill=(40, 40, 40)) # Header
             draw.text((margin_x, curr_term_y + 10), "Terminal", font=font_header, fill=self.text_color)
             
-            frames.append(img)
+            append_frame(img, 1)
 
         # Waiting State (Blinking Cursor + $)
-        base_term_img = frames[-1].copy()
+        base_term_img = last_frame_img.copy() if last_frame_img is not None else Image.new('RGB', (self.width, self.height), self.bg_color)
         prompt_y = term_y_end + 100
-        
+
         for _ in range(45): # Wait 1.5s
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
-            
+
             # Blink cursor
             if _ % 15 < 8:
                 draw.text((margin_x, prompt_y), "$ _", font=font_terminal, fill=self.colors['string'])
             else:
                 draw.text((margin_x, prompt_y), "$", font=font_terminal, fill=self.colors['string'])
-                
-            frames.append(img)
+
+            append_frame(img, 1)
 
         # Type Command
         command = "node index.js"
@@ -602,12 +613,11 @@ class ShortsVideoGenerator:
             draw = ImageDraw.Draw(img)
             curr_cmd += char
             draw.text((margin_x, prompt_y), curr_cmd + "_", font=font_terminal, fill=self.colors['string'])
-            frames.append(img)
-            frames.append(img) # Slow typing
+            append_frame(img, 2) # Slow typing
             
             # Key sound for terminal typing
             if char.strip() and self.audio_enabled:
-                time_ms = int((len(frames) / self.fps) * 1000)
+                time_ms = int((frame_count / self.fps) * 1000)
                 if time_ms - last_key_event_ms >= key_min_interval_ms:
                     if self.key_samples:
                         sample_idx = random.randrange(0, len(self.key_samples))
@@ -618,7 +628,7 @@ class ShortsVideoGenerator:
 
         # Enter sound after command
         if self.audio_enabled:
-            time_ms = int((len(frames) / self.fps) * 1000)
+            time_ms = int((frame_count / self.fps) * 1000)
             audio_events.append((time_ms, 'enter', None))
     # No enter sound (keyboard noises disabled)
 
@@ -637,20 +647,16 @@ class ShortsVideoGenerator:
                 draw.text((margin_x, res_y), line, font=font_terminal, fill=result_color)
                 res_y += 50
                 
-            frames.append(img)
+            append_frame(img, 1)
 
         # --- RENDER VIDEO ---
-        print(f"🎥 Rendering {len(frames)} frames...")
-        temp_video = os.path.join(self.output_dir, "temp_vid.mp4")
-        out = cv2.VideoWriter(temp_video, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (self.width, self.height))
-        
-        for frame in frames:
-            out.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
+        # All frames have been written progressively to temp_video
+        print(f"🎥 Rendering complete ({frame_count} frames written) -> {temp_video}")
         out.release()
 
         # --- MIX AUDIO ---
         print("🎵 Mixing Audio...")
-        total_duration = len(frames) / self.fps * 1000
+        total_duration = frame_count / self.fps * 1000
         if self.audio_enabled:
             final_audio = AudioSegment.silent(duration=total_duration)
             bg_file = self._find_background_file() if hasattr(self, '_find_background_file') else None

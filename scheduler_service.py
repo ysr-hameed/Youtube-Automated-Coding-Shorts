@@ -39,16 +39,41 @@ class AutoScheduler:
         else:
             today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         existing = db.get_schedule_for_day(today)
+        # If we already have schedules for today, decide whether to keep or recreate
+        try:
+            force_recreate = os.getenv('DAILY_FORCE_RECREATE', 'true').lower() in ('1', 'true', 'yes')
+        except Exception:
+            force_recreate = True
+
         if existing and len(existing) >= count:
-            # Log existing schedules so it's clear why no new schedules are created
-            try:
-                print(f"🗓️ Existing schedules for today ({len(existing)}):")
-                for s in existing:
-                    sa = s.get('scheduled_at')
-                    print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
-            except Exception:
-                pass
-            return existing
+            # If count matches, return existing. If existing > count and force_recreate is true,
+            # delete and recreate so the number of schedules exactly matches DAILY_SCHEDULES.
+            if len(existing) == count and not force_recreate:
+                try:
+                    print(f"🗓️ Existing schedules for today ({len(existing)}):")
+                    for s in existing:
+                        sa = s.get('scheduled_at')
+                        print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
+                except Exception:
+                    pass
+                return existing
+
+            if force_recreate:
+                try:
+                    deleted = db.delete_schedules_for_day(today)
+                    print(f"🗑️ Deleted {deleted} existing schedules for today to recreate {count} slots")
+                except Exception as e:
+                    print(f"⚠️ Failed to delete existing schedules: {e}")
+                existing = []
+            else:
+                try:
+                    print(f"🗓️ Existing schedules for today ({len(existing)}):")
+                    for s in existing:
+                        sa = s.get('scheduled_at')
+                        print(f" - {sa.isoformat() if sa else sa} (id: {s.get('id')}) executed={s.get('executed')}")
+                except Exception:
+                    pass
+                return existing
 
         # window start and end
         # Check for explicit times via env var (comma-separated HH:MM values in IST)
