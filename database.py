@@ -57,6 +57,8 @@ class Database:
         self.mock_config = {}
         self.mock_history = []
         self.mock_schedules = []
+        # Minimal topics store persisted to disk (used as a mock DB replacement)
+        self.topics = []
         # Path to persist mock schedules when no DB is available (helps production/test stability)
         try:
             self.mock_store_path = os.path.join('output', 'mock_schedules.json')
@@ -71,6 +73,20 @@ class Database:
                     self.mock_schedules = []
         except Exception:
             self.mock_store_path = None
+        # Topics store persisted to output/topics.json
+        try:
+            self.topics_store_path = os.path.join('output', 'topics.json')
+            os.makedirs('output', exist_ok=True)
+            if os.path.exists(self.topics_store_path):
+                try:
+                    with open(self.topics_store_path, 'r') as _f:
+                        topics_data = json.load(_f)
+                        if isinstance(topics_data, list):
+                            self.topics = topics_data
+                except Exception:
+                    self.topics = []
+        except Exception:
+            self.topics_store_path = None
         # Connection tuning from env
         try:
             self.db_connect_timeout = int(os.getenv('DB_CONNECT_TIMEOUT', '10'))
@@ -95,7 +111,7 @@ class Database:
         self._db_failure_count = 0
         self.init_db()
         # Optionally validate DB connection at start to early detect auth failures
-        validate_on_start = os.getenv('DB_VALIDATE_ON_START', '1').lower() in ('1', 'true', 'yes')
+        validate_on_start = os.getenv('DB_VALIDATE_ON_START', '0').lower() in ('1', 'true', 'yes')
         if validate_on_start:
             conn = self.get_conn()
             if conn:
@@ -103,9 +119,39 @@ class Database:
             else:
                 logging.info('⚠️ Database unavailable at startup; falling back to mock storage')
 
+        # Force using mock DB/topics store by default unless explicitly overridden
+        self.force_mock_db = os.getenv('FORCE_MOCK_DB', 'true').lower() in ('1', 'true', 'yes')
+
+    # Persist topics to disk
+    def persist_topics(self):
+        try:
+            if not getattr(self, 'topics_store_path', None):
+                return False
+            with open(self.topics_store_path, 'w') as _f:
+                json.dump(self.topics, _f)
+            return True
+        except Exception:
+            return False
+
+    def add_topic(self, topic):
+        if not topic:
+            return False
+        t = topic.strip()
+        if not t:
+            return False
+        if t not in self.topics:
+            self.topics.append(t)
+            max_topics = int(os.getenv('MOCK_TOPICS_MAX', '1000'))
+            self.topics = self.topics[-max_topics:]
+            try:
+                self.persist_topics()
+            except Exception:
+                pass
+        return True
+
     def get_conn(self):
         # Force use mock DB if configured
-        if os.getenv('USE_MOCK_DB', 'false').lower() in ('true', '1', 'yes'):
+        if getattr(self, 'force_mock_db', False) or os.getenv('USE_MOCK_DB', 'false').lower() in ('true', '1', 'yes'):
             return None
         # If we don't have a DB url configured, skip attempts
         if not getattr(self, 'db_url', None):
@@ -183,6 +229,17 @@ class Database:
                 logging.warning(f"⚠️ Database connection failed after {self.db_retries} attempts ({last_err}); using in-memory mock storage.")
             self.conn = None
         return self.conn
+
+    def persist_topics(self):
+        """Persist the current `self.topics` list to disk in topics.json if available."""
+        if not getattr(self, 'topics_store_path', None):
+            return False
+        try:
+            with open(self.topics_store_path, 'w') as _f:
+                json.dump(self.topics[-1000:], _f)
+            return True
+        except Exception:
+            return False
 
     def force_reconnect(self):
         """Force the database to attempt to reconnect immediately and reset failure counters."""
@@ -296,6 +353,11 @@ class Database:
                         content.get('language', None)
                     ))
                     new_id = cur.fetchone()[0]
+                    # Also persist topic locally for fallback topic list
+                    try:
+                        self.add_topic(content.get('topic'))
+                    except Exception:
+                        pass
                     return new_id
                 except Exception:
                     # Fallback for older schema without language column
@@ -316,6 +378,10 @@ class Database:
                         new_id = cur.fetchone()[0]
                     except Exception:
                         new_id = None
+                    try:
+                        self.add_topic(content.get('topic'))
+                    except Exception:
+                        pass
                     return new_id
         else:
             # Append content to mock history and return a generated id
@@ -327,6 +393,22 @@ class Database:
             # Ensure language key exists for mock entries
             entry.setdefault('language', content.get('language'))
             self.mock_history.append(entry)
+            # Persist topic to topics list for future queries
+            try:
+                topic = (content.get('topic') or '').strip()
+                if topic:
+                    if topic not in self.topics:
+                        self.topics.append(topic)
+                        # Keep topics list bounded to a reasonable size
+                        max_topics = int(os.getenv('MOCK_TOPICS_MAX', '1000'))
+                        self.topics = self.topics[-max_topics:]
+                        # Persist topics to disk
+                        try:
+                            self.persist_topics()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             return entry_id
 
     # --- Schedule Methods ---
@@ -520,11 +602,10 @@ class Database:
                     cur.execute("SELECT topic FROM content_history ORDER BY created_at DESC LIMIT %s", (limit,))
                     return [row[0] for row in cur.fetchall()]
         else:
-            # Return most recent topics from mock history; filter by language if provided
-            entries = self.mock_history[-limit:][::-1]
-            if language:
-                return [c['topic'] for c in entries if c.get('language') == language]
-            return [c['topic'] for c in entries]
+            # Return most recent topics from the persisted topics list
+            entries = (self.topics or [])[-limit:][::-1]
+            # language filtering is not maintained in the simple topics store; return all topics
+            return entries
 
     def get_recent_history(self, limit=50, language=None):
         """Return recent history entries as dicts: {'topic','code','language'}."""

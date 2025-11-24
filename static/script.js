@@ -49,6 +49,8 @@ async function generateAI() {
         if (data.success) {
             document.getElementById('question').value = data.content.question;
             document.getElementById('code').value = data.content.code;
+                if (data.content.title) document.getElementById('title').value = data.content.title;
+                if (data.content.description) document.getElementById('description').value = data.content.description;
             window.lastGeneratedCode = data.content.code;
             showPreview(data.video_url);
             // If AI-generated video was auto-uploaded to YouTube
@@ -140,6 +142,9 @@ async function refreshSchedule() {
         if (!data.success) {
             if (listUpcoming) listUpcoming.innerText = 'Error loading schedule';
             if (listExecuted) listExecuted.innerText = 'Error loading schedule';
+                // show title and description if present from manual form
+                const t = document.getElementById('title'); if (t && data.title) t.value = data.title;
+                const desc = document.getElementById('description'); if (desc && data.description) desc.value = data.description;
             return;
         }
         const schedules = data.schedules || [];
@@ -211,6 +216,15 @@ function showPreview(url) {
         const formatted = lines.map(line => `<span class="line">${line}</span>`).join('\n');
         codePreview.innerHTML = formatted;
     }
+    // Populate video meta area with title/description if available
+    try {
+        const meta = document.getElementById('videoMeta');
+        if (meta) {
+            const title = document.getElementById('title') ? document.getElementById('title').value : '';
+            const desc = document.getElementById('description') ? document.getElementById('description').value : '';
+            meta.innerHTML = `<div class="font-semibold">${title || 'Untitled'}</div><div class="text-xs text-gray-500">${desc ? desc.substring(0, 140) : ''}</div>`;
+        }
+    } catch(e) {}
 }
 
 function copyCron() {

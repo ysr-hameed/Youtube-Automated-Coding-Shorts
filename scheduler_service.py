@@ -239,12 +239,19 @@ class AutoScheduler:
                                 db.mark_schedule_executed(s.get('id'), executed_at=now, result={'success': False, 'error': 'timeout', 'timeout': True})
                                 print('⏳ Scheduled job timed out; marked as failed')
                                 continue
-                        # If scheduled run returned but was not successful due to daily limit or other external skip, mark accordingly
-                        if isinstance(result, dict) and not result.get('success'):
-                            db.mark_schedule_executed(s.get('id'), executed_at=now, result=result)
-                            continue
-                        # Mark schedule executed with result
-                        db.mark_schedule_executed(s.get('id'), executed_at=now, result={'success': result.get('success', False), 'uploaded': result.get('uploaded', False), 'youtube_id': result.get('youtube_id'), 'error': result.get('upload_error')})
+                        # Normalize result structure and mark schedule executed
+                        if isinstance(result, dict):
+                            normalized = {
+                                'success': bool(result.get('success', False)),
+                                'uploaded': bool(result.get('uploaded', False)),
+                                'youtube_id': result.get('youtube_id'),
+                                'error': result.get('upload_error') or result.get('error')
+                            }
+                            if normalized.get('uploaded'):
+                                normalized['error'] = None
+                        else:
+                            normalized = {'success': False, 'error': 'unknown'}
+                        db.mark_schedule_executed(s.get('id'), executed_at=now, result=normalized)
                 except Exception as e:
                     print('⚠️ Error running scheduled job', e)
             time.sleep(60)

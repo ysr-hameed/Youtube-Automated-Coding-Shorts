@@ -118,6 +118,7 @@ def generate():
             'tags': ["shorts", "coding"],
             'language': data.get('language') or None
         }
+        content['lightweight'] = data.get('lightweight', False) or (os.getenv('LIGHTWEIGHT_RENDER', 'false').lower() in ('1', 'true', 'yes'))
         # Save to DB and generate
         entry_id = db.add_history(content)
         content['db_id'] = entry_id
@@ -236,6 +237,58 @@ def health():
         return jsonify(status)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route('/api/status', methods=['GET'])
+def status():
+    try:
+        pydub_ok = False
+        try:
+            import pydub
+            pydub_ok = True
+        except Exception:
+            pydub_ok = False
+        ffmpeg_ok = False
+        try:
+            import shutil
+            ffmpeg_ok = shutil.which('ffmpeg') is not None
+        except Exception:
+            ffmpeg_ok = False
+        return jsonify({
+            'audio_enabled': generator.audio_enabled,
+            'pydub_available': pydub_ok,
+            'ffmpeg_available': ffmpeg_ok,
+            'topics_count': len(db.topics or []),
+            'mock_db': db.force_mock_db
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/topics', methods=['GET'])
+def api_topics():
+    try:
+        topics = db.get_recent_topics(limit=100) or []
+        return jsonify({'success': True, 'topics': topics})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/topics', methods=['GET'])
+def topics_page():
+    try:
+        topics = db.get_recent_topics(limit=100) or []
+        # Build a basic HTML page with a table of topics
+        html = "<html><head><title>Topics</title><meta charset='utf-8'></head><body>"
+        html += "<h1>Saved Topics</h1>"
+        html += "<table border='1' style='width:80%;border-collapse:collapse;'>"
+        html += "<tr><th>#</th><th>Topic</th></tr>"
+        for idx, t in enumerate(topics):
+            html += f"<tr><td>{idx+1}</td><td>{t}</td></tr>"
+        html += "</table></body></html>"
+        return html
+    except Exception as e:
+        return f"Error loading topics: {e}", 500
 
 
 @app.route('/api/db/reconnect', methods=['POST'])

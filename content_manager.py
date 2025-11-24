@@ -9,7 +9,7 @@ from database import db
 class ContentManager:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.languages = ["JavaScript", "Python", "Go", "Java"]
+        self.languages = ["JavaScript", "Python", "Go", "Java", "C++"]
         if self.api_key:
             genai.configure(api_key=self.api_key)
             # model wrapper
@@ -27,6 +27,7 @@ class ContentManager:
             "Python": "python",
             "Go": "go",
             "Java": "java",
+            "C++": "cpp",
         }
 
         # Pick an initial language at random
@@ -44,7 +45,7 @@ class ContentManager:
             # JSON schema and example to reduce hallucinations and incomplete responses
             schema = {
                 "type": "object",
-                "required": ["topic", "question", "code", "output", "title", "description", "tags"],
+                "required": ["topic", "question", "code", "output", "title", "description", "tags", "thumbnail_prompt", "seo_keywords"],
                 "properties": {
                     "topic": {"type": "string", "description": "Short topic title (3-6 words)"},
                     "question": {"type": "string", "description": "Hook question <= 12 words"},
@@ -52,7 +53,9 @@ class ContentManager:
                     "output": {"type": "string", "description": "Expected program output (max 5 lines)"},
                     "title": {"type": "string", "description": "YouTube title with 2-3 hashtags"},
                     "description": {"type": "string", "description": "SEO-friendly description"},
-                    "tags": {"type": "array", "items": {"type": "string"}}
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "thumbnail_prompt": {"type": "string", "description": "A short phrase to generate a thumbnail image concept for the video"},
+                    "seo_keywords": {"type": "array", "items": {"type": "string"}, "description": "Short list of 3-5 SEO keyword phrases to include in description/tags"}
                 }
             }
 
@@ -61,9 +64,11 @@ class ContentManager:
                 "question": "Can you sum an array with reduce()?",
                 "code": "const nums = [1,2,3,4];\nconst sum = nums.reduce((a,b)=>a+b,0);\nconsole.log(sum);",
                 "output": "10",
-                "title": "Sum an Array in One Line! #shorts #javascript",
-                "description": "Quick example showing how to use Array.prototype.reduce to sum numbers. #shorts #javascript #coding",
+                "title": "Sum an Array in One Line — Reduce() Hack! #shorts #javascript",
+                "description": "Learn how to quickly sum an array using Array.prototype.reduce in JavaScript — quick, clear, and beginner-friendly. #shorts",
                 "tags": ["javascript","shorts","coding"]
+                ,"thumbnail_prompt": "A minimal overlay showing small array numbers inside a jar with a bright action arrow",
+                "seo_keywords": ["javascript reduce", "sum array reduce", "array reduce tutorial"]
             }
 
             prompt_lines = [
@@ -74,7 +79,9 @@ class ContentManager:
                 "Code rules: max 10 non-empty lines, keep it concise and display-friendly.",
                 "Question rules: A short engaging hook <= 12 words (examples: \"What's the output?\", \"Can you fix this?\").",
                 "Output rules: Provide the exact expected stdout output when the snippet is run, max 5 lines.",
-                "Title rules: Include 2-3 viral hashtags (e.g., #shorts #coding #javascript).",
+                "Title rules: Create a high-CTR title (40-60 characters) that includes 1-2 viral hashtags and a strong hook — adrenalized verbs are good (e.g., 'Master', 'Fixed', 'One Line').",
+                "Description rules: 80-160 characters, SEO-optimized, include primary SEO keywords and a short CTA.",
+                "Thumbnail rules: Provide a short thumbnail prompt for an eye-catching image that fits the short format.",
                 "Return schema: Use the following JSON schema and follow the example exactly."
             ]
 
@@ -183,6 +190,12 @@ class ContentManager:
                 except Exception:
                     entry_id = None
                 content["db_id"] = entry_id
+                # Honor lightweight flag for AI generation to allow faster test renders
+                try:
+                    ai_lightweight = os.getenv('AI_LIGHTWEIGHT', 'false').lower() in ('1', 'true', 'yes')
+                except Exception:
+                    ai_lightweight = False
+                content['lightweight'] = ai_lightweight
                 return content
 
             except Exception as e:

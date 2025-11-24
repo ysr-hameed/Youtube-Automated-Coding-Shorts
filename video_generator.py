@@ -396,7 +396,7 @@ class ShortsVideoGenerator:
             lines.append(current)
         return lines
 
-    def generate_video(self, question, code, filename="viral_short", output_text=None, language=None):
+    def generate_video(self, question, code, filename="viral_short", output_text=None, language=None, lightweight=False):
         # Allow passing an explicit language per video; otherwise pick a random one per-call
         if language and language in self.languages:
             self.selected_language = language
@@ -404,6 +404,8 @@ class ShortsVideoGenerator:
             # randomize per call to avoid repeated Python-only output
             self.selected_language = random.choice(self.languages)
         print(f"🚀 Generating Viral Short: {filename} (lang={self.selected_language})")
+        # Create a sanitized name for temp files to avoid collisions when multiple jobs run
+        safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
         
         # 1. Use AI-provided code as the "result" instead of executing it locally.
         # This avoids requiring language runtimes and prevents execution errors.
@@ -421,14 +423,42 @@ class ShortsVideoGenerator:
         except Exception:
             base_ms_per_char = 55.0
         tts_duration_ms = max(300, int(len(question) * base_ms_per_char))  # approximate fallback (ms)
-        if self.audio_enabled:
+        # If lightweight mode is enabled, skip TTS/audio generation entirely to speed up
+        if self.audio_enabled and not lightweight:
             try:
                 print("🗣️ Generating TTS...")
                 tts = gTTS(text=question, lang=self.selected_tts_voice, slow=False)
-                tts_path = os.path.join(self.audio_dir, "tts.mp3")
+                # Use a per-file tts path to avoid collisions when multiple jobs run concurrently
+                safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', filename)
+                tts_path = os.path.join(self.audio_dir, f"tts_{safe_name}.mp3")
                 tts.save(tts_path)
-                tts_audio = AudioSegment.from_mp3(tts_path)
-                tts_duration_ms = len(tts_audio)
+                # Validate file non-empty
+                try:
+                    if os.path.exists(tts_path) and os.path.getsize(tts_path) > 100:
+                        try:
+                            tts_audio = AudioSegment.from_mp3(tts_path)
+                            tts_duration_ms = len(tts_audio)
+                        except Exception as e:
+                            logging.warning(f"TTS saved but failed to load with pydub: {e}")
+                            # Try to re-encode using ffmpeg to a new file (wav) to make it loadable
+                            try:
+                                tmp_reencode = os.path.join(self.audio_dir, f"tts_{safe_name}_re.wav")
+                                cmd = ['ffmpeg', '-y', '-i', tts_path, '-vn', '-ar', '44100', '-ac', '2', tmp_reencode]
+                                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                # Load re-encoded file
+                                tts_audio = AudioSegment.from_wav(tmp_reencode)
+                                tts_duration_ms = len(tts_audio)
+                                # Prefer new re-encoded wav file path for mixing
+                                tts_path = tmp_reencode
+                            except Exception as e2:
+                                logging.warning(f"Failed to re-encode TTS with ffmpeg: {e2}")
+                                tts_path = None
+                    else:
+                        logging.warning("TTS file was saved but seems empty or missing; skipping audio")
+                        tts_path = None
+                except Exception as e:
+                    logging.warning(f"Error validating TTS file: {e}")
+                    tts_path = None
             except Exception as e:
                 logging.warning(f"TTS or audio load failed, continuing without audio: {e}")
                 tts_path = None
@@ -461,6 +491,10 @@ class ShortsVideoGenerator:
                     pass
 
         # If audio isn't enabled or tts_path wasn't produced, scale fallback duration by speedup
+        if lightweight:
+            # Fast fallback duration
+            tts_duration_ms = 300
+            tts_path = None
         if (not self.audio_enabled) or (tts_path is None):
             try:
                 tts_duration_ms = int(tts_duration_ms / speedup)
@@ -474,7 +508,7 @@ class ShortsVideoGenerator:
         frames_per_char_question = max(1, int((ms_per_char_question / 1000) * self.fps))
 
         # Stream frames directly to disk to avoid keeping all frames in memory
-        temp_video = os.path.join(self.output_dir, "temp_vid.mp4")
+        temp_video = os.path.join(self.output_dir, f"temp_vid_{safe_name}.mp4")
         out = cv2.VideoWriter(temp_video, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (self.width, self.height))
         frame_count = 0
         last_frame_img = None
@@ -494,7 +528,7 @@ class ShortsVideoGenerator:
         font_header = self.get_font(40)
         font_terminal = self.get_font(42)
         
-        margin_x = 80
+        margin_x = 120
         header_y = 100
         question_y = 200
         code_y = 380 # Start code lower to give space for question
@@ -596,7 +630,7 @@ class ShortsVideoGenerator:
             append_frame(img, repeats)
 
             # Key sound events: append 'key' event (sample index) or fall back to click
-            if char.strip() and self.audio_enabled:
+            if char.strip() and self.audio_enabled and not lightweight:
                 time_ms = int((frame_count / self.fps) * 1000)
                 if time_ms - last_key_event_ms >= key_min_interval_ms:
                     if self.key_samples:
@@ -727,7 +761,7 @@ class ShortsVideoGenerator:
                 append_frame(img, frames_per_char_code)
                 
                 # Key sound events for code typing
-                if char.strip() and self.audio_enabled:
+                if char.strip() and self.audio_enabled and not lightweight:
                     time_ms = int((frame_count / self.fps) * 1000)
                     if time_ms - last_key_event_ms >= key_min_interval_ms:
                         if self.key_samples:
@@ -752,16 +786,16 @@ class ShortsVideoGenerator:
             term_height = 600
         # Allow a global bottom offset so terminal doesn't touch very bottom of video
         try:
-            term_global_bottom_offset = int(os.getenv('TERM_GLOBAL_BOTTOM_OFFSET_PX', '12'))
+            term_global_bottom_offset = int(os.getenv('TERM_GLOBAL_BOTTOM_OFFSET_PX', '0'))
         except Exception:
             term_global_bottom_offset = 12
         # Terminal padding from each side (overrides/augments inner padding)
         try:
-            term_pad_left = int(os.getenv('TERM_PAD_LEFT_PX', '12'))
+            term_pad_left = int(os.getenv('TERM_PAD_LEFT_PX', '40'))
         except Exception:
             term_pad_left = 12
         try:
-            term_pad_right = int(os.getenv('TERM_PAD_RIGHT_PX', '12'))
+            term_pad_right = int(os.getenv('TERM_PAD_RIGHT_PX', '40'))
         except Exception:
             term_pad_right = 12
         try:
@@ -786,13 +820,17 @@ class ShortsVideoGenerator:
         t_accent = self.terminal_theme.get('accent', (80, 200, 120))
         t_cursor_color = self.terminal_theme.get('cursor', t_accent)
         # Inner padding inside the terminal box (small, to avoid large left gaps)
-        term_inner_pad = int(os.getenv('TERM_INNER_PADDING_PX', '12'))
+        term_inner_pad = int(os.getenv('TERM_INNER_PADDING_PX', '16'))
         # Right padding inside terminal to keep text away from edge
-        term_inner_right = int(os.getenv('TERM_INNER_RIGHT_PX', '12'))
+        term_inner_right = int(os.getenv('TERM_INNER_RIGHT_PX', '72'))
         # Bottom padding inside terminal so logs don't touch the bottom edge
         term_bottom_pad = int(os.getenv('TERM_BOTTOM_PADDING_PX', '24'))
+        # Normalize: keep a single bottom padding variable
+        term_pad_bottom = term_pad_bottom if 'term_pad_bottom' in locals() else term_bottom_pad
         # Header height for terminal (pixels)
         term_header_h = int(os.getenv('TERM_HEADER_HEIGHT_PX', '60'))
+        # Header left-specific padding
+        term_header_left_pad = int(os.getenv('TERM_HEADER_LEFT_PAD_PX', '72'))
 
         # Final terminal X (anchored to left when slide finishes). If you change slide logic
         # to place the terminal elsewhere, update this accordingly.
@@ -885,13 +923,14 @@ class ShortsVideoGenerator:
         draw.rectangle([0, term_y_end, self.width, term_y_end + term_height], fill=t_bg)
         draw.rectangle([0, term_y_end, self.width, term_y_end + term_header_h], fill=t_header_bg)
         # Header text now visible after slide
-        draw.text((term_pad_left, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+        draw.text((final_term_x + term_header_left_pad + term_inner_pad, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
         base_term_img = img
 
         # Waiting State (Blinking Cursor + $) - use terminal colors and cursor shape
         # base_term_img already contains the terminal drawn at final position with header
-        prompt_y = term_y_end + term_header_h + term_pad_top
-        prompt_x = final_term_x + term_pad_left
+        prompt_y = term_y_end + term_header_h + term_pad_top + term_inner_pad
+        term_content_x = final_term_x + term_pad_left + term_inner_pad
+        prompt_x = term_content_x
 
         for _ in range(45): # Wait 1.5s
             img = base_term_img.copy()
@@ -899,9 +938,9 @@ class ShortsVideoGenerator:
 
             # Blink cursor using terminal cursor char and color; use inner terminal padding
             if _ % 8 < 4:
-                draw.text((prompt_x, prompt_y), "$ " + self.selected_term_cursor, font=font_terminal, fill=t_text)
+                draw.text((term_content_x, prompt_y), "$ " + self.selected_term_cursor, font=font_terminal, fill=t_text)
             else:
-                draw.text((prompt_x, prompt_y), "$ ", font=font_terminal, fill=t_text)
+                draw.text((term_content_x, prompt_y), "$ ", font=font_terminal, fill=t_text)
 
             # Optional debug overlay to render terminal coordinates and padding info
             try:
@@ -921,7 +960,7 @@ class ShortsVideoGenerator:
             curr_cmd += char
             # Use terminal theme colors and cursor shape for prompt
             prompt_display = curr_cmd + self.selected_term_cursor
-            draw.text((prompt_x, prompt_y), prompt_display, font=font_terminal, fill=t_text)
+            draw.text((term_content_x, prompt_y), prompt_display, font=font_terminal, fill=t_text)
             # Make terminal typing faster by default; allow tuning
             try:
                 key_frames = int(os.getenv('TERM_TYPING_FRAMES_PER_CHAR', '1'))
@@ -930,7 +969,7 @@ class ShortsVideoGenerator:
             append_frame(img, max(1, key_frames))
 
             # Key sound for terminal typing
-            if char.strip() and self.audio_enabled:
+            if char.strip() and self.audio_enabled and not lightweight:
                 time_ms = int((frame_count / self.fps) * 1000)
                 if time_ms - last_key_event_ms >= key_min_interval_ms:
                     if self.key_samples:
@@ -941,7 +980,7 @@ class ShortsVideoGenerator:
                     last_key_event_ms = time_ms
 
         # Enter sound after command
-        if self.audio_enabled:
+        if self.audio_enabled and not lightweight:
             time_ms = int((frame_count / self.fps) * 1000)
             audio_events.append((time_ms, 'enter', None))
     # No enter sound (keyboard noises disabled)
@@ -955,13 +994,13 @@ class ShortsVideoGenerator:
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
             # Use terminal inner padding and terminal text color for command
-            draw.text((prompt_x, prompt_y), curr_cmd, font=font_terminal, fill=t_text)
+            draw.text((term_content_x, prompt_y), curr_cmd, font=font_terminal, fill=t_text)
 
             res_y = prompt_y + 60
             # Max width available for terminal text content (respect left/right padding only)
-            max_terminal_text_px = max(10, self.width - term_pad_left - term_pad_right)
+            max_terminal_text_px = max(10, self.width - (term_pad_left + term_inner_pad) - (term_pad_right + term_inner_pad))
             # Enforce bottom padding so logs don't run into the bottom edge of terminal
-            max_res_y = term_y_end + term_height - term_bottom_pad
+            max_res_y = term_y_end + term_height - term_pad_bottom
             for line in output_lines:
                 wrapped = terminal_wrap(draw, line, font_terminal, max_terminal_text_px)
                 for wline in wrapped:
@@ -975,12 +1014,12 @@ class ShortsVideoGenerator:
                         # indicate truncation with ellipsis on the last allowed line
                         try:
                             ell = '...'
-                            draw.text((prompt_x, res_y), ell, font=font_terminal, fill=out_color)
+                            draw.text((term_content_x, res_y), ell, font=font_terminal, fill=out_color)
                         except Exception:
                             pass
                         res_y = max_res_y + 1
                         break
-                    draw.text((prompt_x, res_y), wline, font=font_terminal, fill=out_color)
+                    draw.text((term_content_x, res_y), wline, font=font_terminal, fill=out_color)
                     res_y += 50
 
             append_frame(img, 1)
@@ -1068,7 +1107,17 @@ class ShortsVideoGenerator:
                 try:
                     if type == 'tts' and data:
                         # Increase TTS volume a bit so it sits above background/keys
-                        sound = AudioSegment.from_mp3(data).apply_gain(+6)
+                        # Allow mp3, wav, or generic file type detection
+                        try:
+                            if data.lower().endswith('.mp3'):
+                                sound = AudioSegment.from_mp3(data).apply_gain(+6)
+                            elif data.lower().endswith('.wav'):
+                                sound = AudioSegment.from_wav(data).apply_gain(+6)
+                            else:
+                                sound = AudioSegment.from_file(data).apply_gain(+6)
+                        except Exception as e:
+                            logging.warning(f"Failed to load TTS audio {data}: {e}")
+                            sound = None
                     elif type == 'click':
                         sound = click_sound
                     elif type == 'enter':
@@ -1121,7 +1170,7 @@ class ShortsVideoGenerator:
             
         temp_audio = None
         if self.audio_enabled:
-            temp_audio = os.path.join(self.audio_dir, "temp_audio.mp3")
+            temp_audio = os.path.join(self.audio_dir, f"temp_audio_{safe_name}.mp3")
             try:
                 final_audio.export(temp_audio, format="mp3")
             except Exception as e:
@@ -1170,6 +1219,18 @@ class ShortsVideoGenerator:
         try:
             if temp_audio and os.path.exists(temp_audio):
                 os.remove(temp_audio)
+        except Exception:
+            pass
+        # also cleanup any generated TTS files for this job
+        try:
+            tts_candidate_mp3 = os.path.join(self.audio_dir, f"tts_{safe_name}.mp3")
+            tts_candidate_re = os.path.join(self.audio_dir, f"tts_{safe_name}_re.wav")
+            for f in (tts_candidate_mp3, tts_candidate_re):
+                try:
+                    if f and os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
         except Exception:
             pass
         

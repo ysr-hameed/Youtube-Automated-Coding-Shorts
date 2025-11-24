@@ -18,9 +18,18 @@ def process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', au
         lang_arg = requested_lang
     else:
         lang_arg = None
+    # Honor lightweight render flag in content or env var
+    lightweight = False
+    try:
+        if content.get('lightweight'):
+            lightweight = True
+    except Exception:
+        pass
+    if os.getenv('LIGHTWEIGHT_RENDER', 'false').lower() in ('1', 'true', 'yes'):
+        lightweight = True
     try:
         # Pass expected output (if provided by AI) so the video terminal shows the correct result
-        video_path = gen.generate_video(content['question'], content['code'], filename, output_text=content.get('output'), language=lang_arg)
+        video_path = gen.generate_video(content['question'], content['code'], filename, output_text=content.get('output'), language=lang_arg, lightweight=lightweight)
     except Exception as e:
         return {"success": False, "error": f"Video generation failed: {e}"}
 
@@ -34,8 +43,10 @@ def process_and_upload(content, generator, youtube_mgr, filename_prefix='ai', au
                 youtube_id = youtube_mgr.upload_video(
                     video_path,
                     content.get('title', filename),
-                    content.get('description', ''),
-                    content.get('tags', [])
+                    # append SEO keywords into description if present
+                    (content.get('description', '') or '') + (('\n\nSEO: ' + ', '.join(content.get('seo_keywords', []))) if content.get('seo_keywords') else ''),
+                    # tags: include provided tags and any seo_keywords (short fragments) as tags
+                    (content.get('tags', []) or []) + (content.get('seo_keywords', []) if content.get('seo_keywords') else [])
                 )
                 uploaded = True
             except Exception as e:
