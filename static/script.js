@@ -134,38 +134,47 @@ async function refreshSchedule() {
     try {
         const res = await fetch('/api/schedule/today');
         const data = await res.json();
-        const list = document.getElementById('scheduleList');
-        if (!list) return;
+    const listUpcoming = document.getElementById('scheduleUpcoming');
+    const listExecuted = document.getElementById('scheduleExecuted');
+    if (!listUpcoming && !listExecuted) return;
         if (!data.success) {
-            list.innerText = 'Error loading schedule';
+            if (listUpcoming) listUpcoming.innerText = 'Error loading schedule';
+            if (listExecuted) listExecuted.innerText = 'Error loading schedule';
             return;
         }
         const schedules = data.schedules || [];
         if (schedules.length === 0) {
-            list.innerText = 'No scheduled runs for today.';
+            if (listUpcoming) listUpcoming.innerText = 'No scheduled runs for today.';
+            if (listExecuted) listExecuted.innerText = 'No executed runs for today.';
             return;
         }
-        const items = schedules.map(s => {
-            const scheduledAt = new Date(s.scheduled_at);
+
+        const upcomingItems = [];
+        const executedItems = [];
+        schedules.forEach(s => {
+            const scheduledAt = s.scheduled_at ? new Date(s.scheduled_at) : null;
             const executedAt = s.executed_at ? new Date(s.executed_at) : null;
             const tzOptions = { timeZone: 'Asia/Kolkata', hour12: true };
-            const scheduledStr = scheduledAt.toLocaleTimeString(undefined, tzOptions);
+            const scheduledStr = scheduledAt ? scheduledAt.toLocaleTimeString(undefined, tzOptions) : 'n/a';
             const executedStr = executedAt ? executedAt.toLocaleTimeString(undefined, tzOptions) : null;
             let status = s.executed ? `✅ Executed at ${executedStr || 'unknown'} (IST)` : 'Scheduled (IST)';
             let extra = '';
             if (s.result && s.result.error) {
-                const err = s.result.error;
+                const err = s.result.error || '';
                 if (err.toLowerCase().includes('ai')) {
                     extra = '<span class="schedule-error"> - Failed by AI</span>';
-                } else if (s.result.timeout) {
+                } else if (s.result && s.result.timeout) {
                     extra = '<span class="schedule-error"> - Timed out</span>';
-                } else {
+                } else if (err) {
                     extra = `<span class="schedule-error"> - ${err}</span>`;
                 }
             }
-            return `<div class="schedule-item">${scheduledStr} — ${status}${extra}</div>`;
+            const itemHtml = `<div class="schedule-item">${scheduledStr} — ${status}${extra}</div>`;
+            if (s.executed) executedItems.push(itemHtml); else upcomingItems.push(itemHtml);
         });
-        list.innerHTML = items.join('');
+
+        if (listUpcoming) listUpcoming.innerHTML = upcomingItems.length ? upcomingItems.join('') : '<div class="schedule-item">No upcoming runs for today.</div>';
+        if (listExecuted) listExecuted.innerHTML = executedItems.length ? executedItems.join('') : '<div class="schedule-item">No executed runs for today.</div>';
     } catch (e) {
         console.warn('Failed to fetch schedule', e);
     }
@@ -176,8 +185,26 @@ function showPreview(url) {
     const video = document.getElementById('videoPlayer');
     const codePreview = document.getElementById('codePreview');
     section.classList.remove('hidden');
+    // Ensure the preview shows the generated video file (no autoplay)
     video.src = url;
-    video.play();
+    try { video.pause(); } catch(e){}
+    try { video.load(); } catch(e){}
+    // Do not autoplay; user can press play
+    video.controls = true;
+    // populate download link
+    const downloadBtn = document.getElementById('downloadBtn');
+    if (downloadBtn) {
+        downloadBtn.href = url;
+        // derive filename from url
+        try {
+            const parts = url.split('/');
+            const fname = parts[parts.length-1] || 'video.mp4';
+            downloadBtn.download = fname;
+            downloadBtn.classList.remove('hidden');
+        } catch(e) {
+            downloadBtn.classList.remove('hidden');
+        }
+    }
     // Populate code preview with line numbers
     if (window.lastGeneratedCode) {
         const lines = window.lastGeneratedCode.split('\n');

@@ -111,12 +111,12 @@ class AutoScheduler:
             window_start = today + timedelta(hours=8)
         else:
             window_start = max(today + timedelta(hours=8), now + timedelta(minutes=1))  # 8:00 IST or now+1m
-        window_end = today + timedelta(hours=21)   # 21:00 IST
+        window_end = today + timedelta(hours=20)   # 20:00 IST (exclusive end time for production schedule window)
 
         # If the computed window is invalid (end <= start), fall back to full-day window to ensure schedules are created
         if window_end <= window_start:
             window_start = today + timedelta(hours=8)
-            window_end = today + timedelta(hours=21)
+            window_end = today + timedelta(hours=20)
         total_minutes = int((window_end - window_start).total_seconds() // 60)
         # Determine minimum gap minutes and ensure count is valid
         try:

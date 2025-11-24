@@ -292,9 +292,10 @@ def schedule_today():
         tz = pytz.timezone('Asia/Kolkata')
         now = datetime.now(tz)
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        schedules = db.get_schedule_for_day(today)
-        # Filter to only upcoming schedules
-        upcoming = [s for s in schedules if s.get('scheduled_at') and s['scheduled_at'] > now]
+        schedules = db.get_schedule_for_day(today) or []
+        # Return all schedules for today (both past and upcoming), sorted by scheduled_at
+        schedules_sorted = sorted(schedules, key=lambda x: x.get('scheduled_at') or now)
+
         # Convert datetime to ISO strings when present
         def serialize(s):
             return {
@@ -304,7 +305,8 @@ def schedule_today():
                 'executed_at': s.get('executed_at').isoformat() if s.get('executed_at') else None,
                 'result': s.get('result')
             }
-        return jsonify({'success': True, 'schedules': [serialize(s) for s in (upcoming or [])]})
+
+        return jsonify({'success': True, 'schedules': [serialize(s) for s in schedules_sorted]})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

@@ -26,100 +26,9 @@ import math
 class CodeExecutor:
     @staticmethod
     def run_code(language, code, timeout=5):
-        """Run code for the given language and return (output, returncode).
-        Supports: javascript, python, cpp, java (basic)."""
-        lang = (language or '').lower()
-        try:
-            tmpdir = tempfile.mkdtemp()
-            if lang == 'javascript' or lang == 'js':
-                fname = os.path.join(tmpdir, 'index.js')
-                with open(fname, 'w') as f:
-                    f.write(code)
-                cmd = ['node', fname]
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-                out = proc.stdout if proc.stdout else proc.stderr
-                return out.strip(), proc.returncode
-
-            if lang == 'python' or lang == 'py':
-                fname = os.path.join(tmpdir, 'index.py')
-                with open(fname, 'w') as f:
-                    f.write(code)
-                py_cmd = shutil.which('python3') or shutil.which('python')
-                if not py_cmd:
-                    return 'Error: python not found on PATH', 1
-                proc = subprocess.run([py_cmd, fname], capture_output=True, text=True, timeout=timeout)
-                out = proc.stdout if proc.stdout else proc.stderr
-                return out.strip(), proc.returncode
-
-            if lang == 'cpp' or lang == 'c++':
-                fname = os.path.join(tmpdir, 'index.cpp')
-                exe = os.path.join(tmpdir, 'a.out')
-                with open(fname, 'w') as f:
-                    f.write(code)
-                gpp = shutil.which('g++')
-                if not gpp:
-                    return 'Error: g++ not found on PATH', 1
-                compile = subprocess.run([gpp, fname, '-o', exe], capture_output=True, text=True)
-                if compile.returncode != 0:
-                    return compile.stderr.strip() or compile.stdout.strip(), compile.returncode
-                proc = subprocess.run([exe], capture_output=True, text=True, timeout=timeout)
-                out = proc.stdout if proc.stdout else proc.stderr
-                return out.strip(), proc.returncode
-
-            if lang == 'java':
-                # Wrap code into Main.java if it doesn't contain a public class Main
-                java_path = os.path.join(tmpdir, 'Main.java')
-                if 'class ' in code and 'public static void main' in code:
-                    # Assume user provided full java class; write as-is
-                    with open(java_path, 'w') as f:
-                        f.write(code)
-                else:
-                    # Wrap into Main
-                    wrapped = 'public class Main { public static void main(String[] args) { '\
-                              + code.replace('"', '\"') + ' } }'
-                    with open(java_path, 'w') as f:
-                        f.write(wrapped)
-                javac = shutil.which('javac')
-                java = shutil.which('java')
-                if not javac or not java:
-                    return 'Error: javac/java not found on PATH', 1
-                compile = subprocess.run([javac, java_path], capture_output=True, text=True, cwd=tmpdir)
-                if compile.returncode != 0:
-                    return compile.stderr.strip() or compile.stdout.strip(), compile.returncode
-                proc = subprocess.run([java, '-cp', tmpdir, 'Main'], capture_output=True, text=True, timeout=timeout)
-                out = proc.stdout if proc.stdout else proc.stderr
-                return out.strip(), proc.returncode
-
-            # Basic support for Go if 'go' is available on PATH; otherwise skip execution gracefully.
-            if lang in ('go', 'golang'):
-                go_cmd = shutil.which('go')
-                if not go_cmd:
-                    return ('', 0)
-                # write code to main.go and run
-                go_file = os.path.join(tmpdir, 'main.go')
-                with open(go_file, 'w') as f:
-                    f.write(code)
-                proc = subprocess.run([go_cmd, 'run', go_file], capture_output=True, text=True, timeout=timeout)
-                out = proc.stdout if proc.stdout else proc.stderr
-                return out.strip(), proc.returncode
-
-            # If language not explicitly supported, return empty output (non-fatal)
-            return ('', 0)
-        except subprocess.TimeoutExpired:
-            return f'Error: Execution timed out ({timeout}s limit)', 1
-        except Exception as e:
-            return f'Error: {str(e)}', 1
-        finally:
-            try:
-                if os.path.isdir(tmpdir):
-                    for p in os.listdir(tmpdir):
-                        try:
-                            os.remove(os.path.join(tmpdir, p))
-                        except Exception:
-                            pass
-                    os.rmdir(tmpdir)
-            except Exception:
-                pass
+        """Execution disabled in the generator to avoid running untrusted code.
+        Always return empty output, allowing AI-provided output to be used instead."""
+        return ('', 0)
 
 class ShortsVideoGenerator:
     def __init__(self, cursor_style='_'):
@@ -651,7 +560,14 @@ class ShortsVideoGenerator:
         slide_offset = 50 if self.selected_style == 'slide_up' else 0
         char_count = 0
 
-        for char in flat_question:
+        # Distribute frames per character so typing finishes exactly when TTS audio finishes.
+        total_chars = len(flat_question)
+        total_frames_available = max(1, int((tts_duration_ms / 1000.0) * self.fps))
+        base_frames = total_frames_available // max(1, total_chars)
+        remainder = total_frames_available - (base_frames * max(1, total_chars))
+        frames_per_char_list = [base_frames + (1 if i < remainder else 0) for i in range(total_chars)]
+
+        for idx, char in enumerate(flat_question):
             img, draw = create_bg()
 
             # Draw typed question so far
@@ -662,8 +578,7 @@ class ShortsVideoGenerator:
             if self.selected_style == 'slide_up':
                 slide_offset = max(0, 50 - (char_count * 1))  # Slide up 1 pixel per char
 
-            # We need to re-wrap the current text to draw it correctly line by line
-            # This is a bit inefficient but ensures correct wrapping animation
+            # Re-wrap the current text to draw it correctly line by line
             curr_lines = current_q_text.split('\n')
 
             y = question_y + slide_offset
@@ -671,12 +586,14 @@ class ShortsVideoGenerator:
                 draw.text((margin_x, y), line, font=font_question, fill=self.selected_question_color)
                 y += 80
 
-            # Cursor
+            # Cursor (use terminal-neutral cursor style for question area)
             cursor_pos = draw.textlength(curr_lines[-1], font=font_question)
-            draw.text((margin_x + cursor_pos, y - 80), self.cursor_style, font=font_question, fill=self.colors['cursor'])
+            draw.text((margin_x + cursor_pos, y - 80), self.selected_cursor, font=font_question, fill=self.colors['cursor'])
 
-            # Add frames (streamed)
-            append_frame(img, frames_per_char_question)
+            # Add frames (streamed) - distributed per character
+            repeats = frames_per_char_list[idx] if idx < len(frames_per_char_list) else base_frames
+            repeats = max(1, repeats)
+            append_frame(img, repeats)
 
             # Key sound events: append 'key' event (sample index) or fall back to click
             if char.strip() and self.audio_enabled:
@@ -743,12 +660,16 @@ class ShortsVideoGenerator:
         
         # Faster typing for code (user adjustable). Base frames per char can be tuned with FRAMES_PER_CHAR_CODE
         try:
-            base_frames_per_char_code = int(os.getenv('FRAMES_PER_CHAR_CODE', '2'))
+            base_frames_per_char_code = int(os.getenv('FRAMES_PER_CHAR_CODE', '1'))
         except Exception:
             base_frames_per_char_code = 2
-        # Scale code typing speed with SPEEDUP_FACTOR (higher -> fewer frames per char)
+        # Scale code typing speed with SPEEDUP_FACTOR (higher -> fewer frames per char) and allow a code-specific speed factor
         try:
-            frames_per_char_code = max(1, int(base_frames_per_char_code / speedup))
+            code_speed_factor = float(os.getenv('CODE_SPEED_FACTOR', '1.0'))
+        except Exception:
+            code_speed_factor = 1.0
+        try:
+            frames_per_char_code = max(1, int(base_frames_per_char_code / max(0.01, (speedup * code_speed_factor))))
         except Exception:
             frames_per_char_code = max(1, int(base_frames_per_char_code))
         
@@ -825,8 +746,36 @@ class ShortsVideoGenerator:
         # --- PHASE 4: TERMINAL EXECUTION ---
         # --- PHASE 4: TERMINAL EXECUTION ---
         # Terminal slide animation: randomly choose an entry direction: up, left, right
-        term_height = 600
-        term_y_end = self.height - term_height
+        try:
+            term_height = int(os.getenv('TERM_HEIGHT_PX', '600'))
+        except Exception:
+            term_height = 600
+        # Allow a global bottom offset so terminal doesn't touch very bottom of video
+        try:
+            term_global_bottom_offset = int(os.getenv('TERM_GLOBAL_BOTTOM_OFFSET_PX', '12'))
+        except Exception:
+            term_global_bottom_offset = 12
+        # Terminal padding from each side (overrides/augments inner padding)
+        try:
+            term_pad_left = int(os.getenv('TERM_PAD_LEFT_PX', '12'))
+        except Exception:
+            term_pad_left = 12
+        try:
+            term_pad_right = int(os.getenv('TERM_PAD_RIGHT_PX', '12'))
+        except Exception:
+            term_pad_right = 12
+        try:
+            term_pad_top = int(os.getenv('TERM_PAD_TOP_PX', '12'))
+        except Exception:
+            term_pad_top = 12
+        try:
+            term_pad_bottom = int(os.getenv('TERM_PAD_BOTTOM_PX', '24'))
+        except Exception:
+            term_pad_bottom = 24
+
+
+        term_y_end = self.height - term_height - term_global_bottom_offset
+        # Random slide direction (up, left, right)
         directions = ['up', 'left', 'right']
         term_direction = random.choice(directions)
 
@@ -837,9 +786,59 @@ class ShortsVideoGenerator:
         t_accent = self.terminal_theme.get('accent', (80, 200, 120))
         t_cursor_color = self.terminal_theme.get('cursor', t_accent)
         # Inner padding inside the terminal box (small, to avoid large left gaps)
-        term_inner_pad = int(os.getenv('TERM_INNER_PADDING_PX', '24'))
+        term_inner_pad = int(os.getenv('TERM_INNER_PADDING_PX', '12'))
+        # Right padding inside terminal to keep text away from edge
+        term_inner_right = int(os.getenv('TERM_INNER_RIGHT_PX', '12'))
+        # Bottom padding inside terminal so logs don't touch the bottom edge
+        term_bottom_pad = int(os.getenv('TERM_BOTTOM_PADDING_PX', '24'))
+        # Header height for terminal (pixels)
+        term_header_h = int(os.getenv('TERM_HEADER_HEIGHT_PX', '60'))
 
-        for i in range(20):
+        # Final terminal X (anchored to left when slide finishes). If you change slide logic
+        # to place the terminal elsewhere, update this accordingly.
+        final_term_x = 0
+
+        def terminal_wrap(draw, text, font, max_px):
+            """Wrap `text` into a list of lines that fit within max_px using draw.textlength measurements."""
+            if not text:
+                return [""]
+            words = text.split(' ')
+            lines = []
+            current = words[0]
+            for w in words[1:]:
+                candidate = current + ' ' + w
+                if draw.textlength(candidate, font=font) <= max_px:
+                    current = candidate
+                else:
+                    lines.append(current)
+                    current = w
+            if current:
+                lines.append(current)
+            # As a safety, if any line still exceeds max_px, break by characters
+            final_lines = []
+            for ln in lines:
+                if draw.textlength(ln, font=font) <= max_px:
+                    final_lines.append(ln)
+                else:
+                    part = ''
+                    for ch in ln:
+                        if draw.textlength(part + ch, font=font) <= max_px:
+                            part += ch
+                        else:
+                            final_lines.append(part)
+                            part = ch
+                    if part:
+                        final_lines.append(part)
+            return final_lines
+
+        # Slide duration (seconds) -> frames. Default to 0.5s for a snappy slide.
+        try:
+            term_slide_duration = float(os.getenv('TERM_SLIDE_DURATION_SEC', '0.5'))
+            term_slide_frames = max(1, int(term_slide_duration * self.fps))
+        except Exception:
+            term_slide_frames = max(1, int(0.5 * self.fps))
+
+        for i in range(term_slide_frames):
             img, draw = create_bg()
             # Draw static content above the terminal
             y = question_y
@@ -861,45 +860,56 @@ class ShortsVideoGenerator:
                         x += draw.textlength(token, font=font_code)
                     cy += 70
 
-            # Draw Terminal Box with different slide directions; terminal anchored at bottom
-            progress = i / 20
+            # Slide progress (0 -> 1)
+            progress = i / (term_slide_frames - 1) if term_slide_frames > 1 else 1.0
+
+            # Draw terminal sliding from chosen direction, but do NOT render header text yet.
             if term_direction == 'up':
-                # Slide terminal up from off-screen bottom into place
                 curr_term_y = int(self.height + (term_y_end - self.height) * progress)
-                # main body
                 draw.rectangle([0, curr_term_y, self.width, curr_term_y + term_height], fill=t_bg)
-                # header
-                draw.rectangle([0, curr_term_y, self.width, curr_term_y + 60], fill=t_header_bg)
-                draw.text((term_inner_pad, curr_term_y + 10), "Terminal", font=font_header, fill=t_text)
+                draw.rectangle([0, curr_term_y, self.width, curr_term_y + term_header_h], fill=t_header_bg)
             elif term_direction == 'left':
-                # Slide terminal in from left to its bottom-aligned area
                 curr_term_x = int(-self.width + (self.width * progress))
                 draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_height], fill=t_bg)
-                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + 60], fill=t_header_bg)
-                draw.text((curr_term_x + term_inner_pad, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_header_h], fill=t_header_bg)
             else:  # right
-                # Slide terminal in from right to bottom area
                 curr_term_x = int(self.width - (self.width * progress))
                 draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_height], fill=t_bg)
-                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + 60], fill=t_header_bg)
-                draw.text((curr_term_x + term_inner_pad, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+                draw.rectangle([curr_term_x, term_y_end, curr_term_x + self.width, term_y_end + term_header_h], fill=t_header_bg)
 
             append_frame(img, 1)
 
+        # After slide completes, render the terminal at its final location with header text and use that as base image
+        img, draw = create_bg()
+        # Terminal final position
+        draw.rectangle([0, term_y_end, self.width, term_y_end + term_height], fill=t_bg)
+        draw.rectangle([0, term_y_end, self.width, term_y_end + term_header_h], fill=t_header_bg)
+        # Header text now visible after slide
+        draw.text((term_pad_left, term_y_end + 10), "Terminal", font=font_header, fill=t_text)
+        base_term_img = img
+
         # Waiting State (Blinking Cursor + $) - use terminal colors and cursor shape
-        base_term_img = last_frame_img.copy() if last_frame_img is not None else Image.new('RGB', (self.width, self.height), self.bg_color)
-        prompt_y = term_y_end + 100
+        # base_term_img already contains the terminal drawn at final position with header
+        prompt_y = term_y_end + term_header_h + term_pad_top
+        prompt_x = final_term_x + term_pad_left
 
         for _ in range(45): # Wait 1.5s
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
 
             # Blink cursor using terminal cursor char and color; use inner terminal padding
-            if _ % 15 < 8:
-                draw.text((term_inner_pad, prompt_y), "$ " + self.selected_term_cursor, font=font_terminal, fill=t_text)
+            if _ % 8 < 4:
+                draw.text((prompt_x, prompt_y), "$ " + self.selected_term_cursor, font=font_terminal, fill=t_text)
             else:
-                draw.text((term_inner_pad, prompt_y), "$ ", font=font_terminal, fill=t_text)
+                draw.text((prompt_x, prompt_y), "$ ", font=font_terminal, fill=t_text)
 
+            # Optional debug overlay to render terminal coordinates and padding info
+            try:
+                if os.getenv('TERM_DEBUG', '0') == '1':
+                    debug_text = f"term_y_end={term_y_end} term_h={term_height} header_h={term_header_h} pad_top={term_pad_top} pad_left={term_pad_left} pad_right={term_pad_right}"
+                    draw.text((10, 10), debug_text, font=font_header, fill=(255,255,255))
+            except Exception:
+                pass
             append_frame(img, 1)
 
         # Type Command
@@ -911,8 +921,13 @@ class ShortsVideoGenerator:
             curr_cmd += char
             # Use terminal theme colors and cursor shape for prompt
             prompt_display = curr_cmd + self.selected_term_cursor
-            draw.text((term_inner_pad, prompt_y), prompt_display, font=font_terminal, fill=t_text)
-            append_frame(img, 2) # Slow typing
+            draw.text((prompt_x, prompt_y), prompt_display, font=font_terminal, fill=t_text)
+            # Make terminal typing faster by default; allow tuning
+            try:
+                key_frames = int(os.getenv('TERM_TYPING_FRAMES_PER_CHAR', '1'))
+            except Exception:
+                key_frames = 1
+            append_frame(img, max(1, key_frames))
 
             # Key sound for terminal typing
             if char.strip() and self.audio_enabled:
@@ -940,17 +955,33 @@ class ShortsVideoGenerator:
             img = base_term_img.copy()
             draw = ImageDraw.Draw(img)
             # Use terminal inner padding and terminal text color for command
-            draw.text((term_inner_pad, prompt_y), curr_cmd, font=font_terminal, fill=t_text)
+            draw.text((prompt_x, prompt_y), curr_cmd, font=font_terminal, fill=t_text)
 
             res_y = prompt_y + 60
+            # Max width available for terminal text content (respect left/right padding only)
+            max_terminal_text_px = max(10, self.width - term_pad_left - term_pad_right)
+            # Enforce bottom padding so logs don't run into the bottom edge of terminal
+            max_res_y = term_y_end + term_height - term_bottom_pad
             for line in output_lines:
-                # Colorize output using terminal error/success colors when possible
-                if return_code != 0:
-                    out_color = self.terminal_theme.get('error', result_color)
-                else:
-                    out_color = self.terminal_theme.get('success', result_color)
-                draw.text((term_inner_pad, res_y), line, font=font_terminal, fill=out_color)
-                res_y += 50
+                wrapped = terminal_wrap(draw, line, font_terminal, max_terminal_text_px)
+                for wline in wrapped:
+                    # Colorize output using terminal error/success colors when possible
+                    if return_code != 0:
+                        out_color = self.terminal_theme.get('error', result_color)
+                    else:
+                        out_color = self.terminal_theme.get('success', result_color)
+                    # If the next line would be below the allowed terminal content area, stop drawing more lines
+                    if res_y + 40 > max_res_y:
+                        # indicate truncation with ellipsis on the last allowed line
+                        try:
+                            ell = '...'
+                            draw.text((prompt_x, res_y), ell, font=font_terminal, fill=out_color)
+                        except Exception:
+                            pass
+                        res_y = max_res_y + 1
+                        break
+                    draw.text((prompt_x, res_y), wline, font=font_terminal, fill=out_color)
+                    res_y += 50
 
             append_frame(img, 1)
 
@@ -1107,11 +1138,27 @@ class ShortsVideoGenerator:
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             except Exception as e:
                 logging.warning(f"ffmpeg merge failed, saving video without audio: {e}")
-                # If ffmpeg merge fails, simply copy temp_video to final output
-                os.replace(temp_video, final_output)
+                # If ffmpeg merge fails, copy temp_video to final output (fallback)
+                try:
+                    if os.path.exists(temp_video):
+                        import shutil
+                        shutil.copyfile(temp_video, final_output)
+                    else:
+                        raise FileNotFoundError(f"temp_video not found: {temp_video}")
+                except Exception as e2:
+                    logging.error(f"Failed to save video without audio: {e2}")
+                    raise
         else:
-            # If no ffmpeg or audio, just move/copy the video file as final output
-            os.replace(temp_video, final_output)
+            # If no ffmpeg or audio, just copy the video file as final output
+            try:
+                if os.path.exists(temp_video):
+                    import shutil
+                    shutil.copyfile(temp_video, final_output)
+                else:
+                    raise FileNotFoundError(f"temp_video not found: {temp_video}")
+            except Exception as e:
+                logging.error(f"Failed to save video file without merge: {e}")
+                raise
         
         # Cleanup
         # Cleanup remaining temp files if they exist

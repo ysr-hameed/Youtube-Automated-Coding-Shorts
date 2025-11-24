@@ -6,78 +6,100 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ViralShorts AI</title>
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
+    <!-- Tailwind CDN for quick UI scaffolding -->
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body>
-    <div class="app-container">
-        <header>
-            <div class="logo">🚀 ViralShorts AI</div>
-            <div class="status-badge" id="status">System Ready</div>
+    <div class="min-h-screen bg-black font-sans">
+        <header class="max-w-4xl mx-auto py-6 px-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <!-- simple rocket icon -->
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="text-indigo-600">
+                    <path d="M12 2C12 2 9 5 7 9C5 13 7 22 7 22C7 22 16 20 20 16C24 12 22 3 22 3C19 2 12 2 12 2Z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div class="text-2xl font-semibold text-gray-100">ViralShorts AI</div>
+            </div>
+            <div id="status" class="text-sm text-gray-600">System Ready</div>
         </header>
 
-        <main>
-            <!-- Manual Generator -->
-            <section class="card">
-                <h2>🛠️ Manual Generator</h2>
-                <div class="form-group">
-                    <label>Question</label>
-                    <input type="text" id="question" placeholder="Ex: Write a function to reverse a string">
-                </div>
-                <div class="form-group">
-                    <label>Code (Node.js)</label>
-                    <textarea id="code" rows="8" placeholder="function reverse(str) { ... }"></textarea>
-                </div>
-                <div class="controls">
-                    <select id="cursor">
-                        <option value="_">Cursor: Underscore (_)</option>
-                        <option value="|">Cursor: Block (|)</option>
-                    </select>
-                    <button onclick="generateManual()" class="btn-primary">Generate Video</button>
-                </div>
-            </section>
-            <!-- Cronjob URL -->
-            <section class="card">
-                <h2>🔁 Cron/Automations</h2>
-                <p>Trigger automated generation & upload via cron or webhooks.</p>
-                <div class="form-group">
-                    <label for="cronUrl">Cron URL (GET)</label>
-                    <input id="cronUrl" type="text" readonly value="" />
-                </div>
-                <div class="controls">
-                    <button class="btn-primary" onclick="copyCron()">Copy Cron URL</button>
-                </div>
-            </section>
+        <main class="max-w-4xl mx-auto px-4 py-6">
+            <div class="grid-main">
+                <div>
+                    <!-- Manual Generator -->
+                    <section class="card bg-black p-4 rounded shadow">
+                        <h2 class="text-lg font-semibold text-gray-100 flex items-center gap-2"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 7h18M7 3v18" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Manual Generator</h2>
+                        <div class="form-group">
+                            <label>Question</label>
+                            <input type="text" id="question" placeholder="Ex: Write a function to reverse a string">
+                        </div>
+                        <div class="form-group">
+                            <label>Code (Node.js)</label>
+                            <textarea id="code" rows="8" placeholder="function reverse(str) { ... }"></textarea>
+                        </div>
+                        <div class="controls flex items-center gap-2">
+                            <select id="cursor">
+                                <option value="_">Cursor: Underscore (_)</option>
+                                <option value="|">Cursor: Block (|)</option>
+                            </select>
+                            <button onclick="generateManual()" class="btn-primary bad-button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 3v18l15-9L5 3z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Generate Video</button>
+                        </div>
+                    </section>
 
-            <!-- Today's Schedule -->
-            <section class="card">
-                <h2>📅 Today's Schedule (India Time)</h2>
-                <button onclick="resetSchedule()" class="btn-secondary" style="margin-bottom: 10px;">🔄 Reset Schedule</button>
-                <div id="scheduleList">Loading schedule...</div>
-            </section>
+                    <!-- Cronjob URL -->
+                    <section class="card bg-black p-4 rounded shadow mt-4">
+                        <h2 class="text-lg font-semibold text-gray-100"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2v4M12 18v4M4 12h4M16 12h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Cron/Automations</h2>
+                        <p class="text-sm text-gray-600">Trigger automated generation & upload via cron or webhooks.</p>
+                        <div class="form-group">
+                            <label for="cronUrl">Cron URL (GET)</label>
+                            <input id="cronUrl" type="text" readonly value="" />
+                        </div>
+                        <div class="controls">
+                            <button class="btn-primary bad-button-sm" onclick="copyCron()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 7h10v12H5V7h4zM7 3h10v4H7V3z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Copy Cron URL</button>
+                        </div>
+                    </section>
 
-            <!-- AI Automation -->
-            <section class="card ai-card">
-                <h2>✨ AI Automation</h2>
-                <p>Generate unique content using Gemini & Upload to YouTube</p>
-                <div class="ai-controls">
-                    <button onclick="generateAI()" class="btn-magic">✨ Generate Viral Short</button>
-                    <button id="btnYoutube" onclick="authYouTube()" class="btn-youtube">🔴 Auth YouTube</button>
-                    <label class="auto-upload">
-                        <input type="checkbox" id="autoUpload" checked /> Auto Upload to YouTube
-                    </label>
+                    <!-- AI Automation -->
+                    <section class="card ai-card bg-black p-4 rounded shadow mt-4">
+                        <h2 class="text-lg font-semibold text-gray-100"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7l3-7z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> AI Automation</h2>
+                        <p class="text-sm text-gray-600">Generate unique content using Gemini & Upload to YouTube</p>
+                        <div class="ai-controls flex items-center gap-2 mt-3">
+                            <button onclick="generateAI()" class="btn-magic bad-button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7l3-7z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Generate Viral Short</button>
+                            <button id="btnYoutube" onclick="authYouTube()" class="btn-youtube bad-button-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M23 7s-.2-1.4-.8-2c-.8-.9-1.7-.9-2.1-1C17.6 3 12 3 12 3s-5.6 0-8.1.9c-.4.1-1.3.1-2.1 1C1.2 5.6 1 7 1 7S1 8.8 1 10.6v2.8C1 16 2 17 2 17s.6.7 2.3 1.1C6.4 19.6 12 19.6 12 19.6s5.6 0 8.1-.9c.4-.1 1.3-.1 2.1-1 .6-.6.8-2 .8-2s.2-1.8.2-3.6V10.6c0-1.8-.2-3.6-.2-3.6z" stroke="currentColor" stroke-width="0.6" stroke-linecap="round" stroke-linejoin="round"/></svg> Auth YouTube</button>
+                            <label class="auto-upload inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" id="autoUpload" checked /> Auto Upload to YouTube
+                            </label>
+                        </div>
+                    </section>
                 </div>
-            </section>
 
-            <!-- Preview -->
-        <section class="card preview-card hidden" id="previewSection">
-            <h2>📺 Preview</h2>
-            <video id="videoPlayer" controls></video>
-            <div class="video-meta" id="videoMeta"></div>
-            <pre class="code-preview" id="codePreview"></pre>
-        </section>
+                <div>
+                    <section class="card bg-black p-4 rounded shadow" id="scheduleCard">
+                        <h2 class="text-lg font-semibold text-gray-100"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.2"/></svg> Scheduled Runs</h2>
+                        <div class="mt-2">
+                            <h3 class="text-sm font-semibold text-gray-700">Upcoming</h3>
+                            <div id="scheduleUpcoming">Loading upcoming schedule...</div>
+                            <h3 class="text-sm font-semibold text-gray-700 mt-3">Executed</h3>
+                            <div id="scheduleExecuted">Loading executed schedule...</div>
+                        </div>
+                    </section>
+
+                    <section class="card preview-card hidden bg-black p-4 rounded shadow mt-4" id="previewSection">
+                        <h2 class="text-lg font-semibold text-gray-100"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 3v18l15-9L5 3z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Preview</h2>
+                        <div class="mt-3">
+                            <video id="videoPlayer" controls class="w-full rounded bg-black" playsinline></video>
+                        </div>
+                        <div class="flex items-center justify-between mt-3">
+                            <div class="video-meta text-sm text-gray-600" id="videoMeta"></div>
+                            <a id="downloadBtn" class="hidden inline-flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded" download><svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3v12M7 10l5 5 5-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 21h14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Download</a>
+                        </div>
+                        <pre class="code-preview mt-3 bg-gray-100 p-3 rounded text-sm" id="codePreview"></pre>
+                    </section>
+                </div>
+            </div>
         </main>
     </div>
     <script src="/static/script.js"></script>
